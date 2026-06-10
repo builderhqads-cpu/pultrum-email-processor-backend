@@ -1,0 +1,353 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Department {
+  OPEN_TRANSPORT
+  STUK_GOED
+}
+
+enum EmailStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  FAILED
+}
+
+enum OrderType {
+  NEW_ORDER
+  MODIFICATION
+  UNKNOWN
+}
+
+enum UserRole {
+  ADMIN
+  OPERATOR
+}
+
+enum OrderStatus {
+  EMAIL_RECEIVED
+  PROCESSING
+  NEW_ORDER
+  MODIFICATION_DETECTED
+  MISSING_INFORMATION
+  WAITING_CUSTOMER_RESPONSE
+  READY_TO_XML
+  XML_GENERATED
+  SENT_TO_CREATIVE_GEARS
+  CREATIVE_GEARS_ACCEPTED
+  CREATIVE_GEARS_REJECTED
+  MANUAL_REVIEW
+  FAILED
+}
+
+enum XmlDeliveryStatus {
+  PENDING
+  SENT
+  ACCEPTED
+  REJECTED
+  FAILED
+}
+
+enum CustomerReplyDraftStatus {
+  DRAFT
+  SENT
+  CANCELLED
+}
+
+enum EmailLinkMethod {
+  REPLY_TOKEN
+  IN_REPLY_TO
+  REFERENCES
+  INTERNET_MESSAGE_ID
+  SENDER_MATCH
+}
+
+enum FieldRequirement {
+  REQUIRED
+  RECOMMENDED
+  OPTIONAL
+}
+
+model Mailbox {
+  id                     String     @id @default(uuid()) @db.Uuid
+  email                  String     @unique
+  department             Department
+  active                 Boolean    @default(true)
+  lastSyncedAt           DateTime?
+  graphConnectedEmail    String?
+  graphDisplayName       String?
+  graphProviderAccountId String?
+  graphTenantId          String?
+  graphAccessToken       String?
+  graphRefreshToken      String?
+  graphTokenExpiresAt    DateTime?
+  graphScopes            String?
+  createdAt              DateTime   @default(now())
+  updatedAt              DateTime   @updatedAt
+
+  emailMessages EmailMessage[]
+
+  @@index([department])
+  @@index([active])
+}
+
+model EmailMessage {
+  id               String           @id @default(uuid()) @db.Uuid
+  mailboxId        String           @db.Uuid
+  graphMessageId   String           @unique
+  conversationId   String
+  messageIdHeader  String?
+  inReplyToHeader  String?
+  referencesHeader String?
+  threadKey        String?
+  linkedOrderId    String?          @db.Uuid
+  linkedByMethod   EmailLinkMethod?
+  fromEmail        String
+  fromName         String
+  subject          String
+  bodyText         String?
+  bodyHtml         String?
+  rawMimeBase64    String?
+  rawMimeFileName  String?
+  rawMimeMimeType  String?
+  receivedAt       DateTime
+  hasAttachments   Boolean          @default(false)
+  status           EmailStatus      @default(RECEIVED)
+  isTransportOrder       Boolean?
+  classificationReason   String?
+  classificationLanguage String?
+  classifiedAt           DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  mailbox     Mailbox         @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+  attachments Attachment[]
+  order       TransportOrder?
+  linkedOrder TransportOrder? @relation("LinkedOrder", fields: [linkedOrderId], references: [id], onDelete: SetNull)
+
+  @@index([mailboxId, receivedAt])
+  @@index([status])
+  @@index([conversationId])
+  @@index([messageIdHeader])
+  @@index([inReplyToHeader])
+  @@index([linkedOrderId])
+  @@index([linkedByMethod])
+}
+
+model Attachment {
+  id                String                     @id @default(uuid()) @db.Uuid
+  emailMessageId    String                     @db.Uuid
+  graphAttachmentId String
+  fileName          String
+  mimeType          String
+  size              Int
+  contentBase64     String?
+  extractedText     String?
+  extractionMethod  String?
+  extractionStatus  AttachmentExtractionStatus @default(PENDING)
+  createdAt         DateTime                   @default(now())
+
+  emailMessage EmailMessage @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
+
+  @@unique([emailMessageId, graphAttachmentId])
+  @@index([emailMessageId])
+}
+
+enum AttachmentExtractionStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  OCR_REQUIRED
+}
+
+model TransportOrder {
+  id                     String      @id @default(uuid()) @db.Uuid
+  emailMessageId         String      @unique @db.Uuid
+  department             Department
+  type                   OrderType   @default(UNKNOWN)
+  status                 OrderStatus @default(EMAIL_RECEIVED)
+  customerEmail          String
+  customerName           String?
+  originalOrderReference String?
+  renovoToken            String?
+  replyToken             String?     @unique
+  conversationKey        String?
+  lastCustomerReplyAt    DateTime?
+  overallConfidence      Float?
+  createdAt              DateTime    @default(now())
+  updatedAt              DateTime    @updatedAt
+
+  emailMessage  EmailMessage        @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
+  linkedEmails  EmailMessage[]      @relation("LinkedOrder")
+  fields        OrderField[]
+  missingFields MissingField[]
+  validationWarnings ValidationWarning[]
+  aiRequests    AiRequest[]
+  xmlDeliveries XmlDelivery[]
+  replyDraft    CustomerReplyDraft? @relation("OrderReplyDraft")
+
+  @@index([department])
+  @@index([status])
+  @@index([type])
+  @@index([renovoToken])
+  @@index([replyToken])
+  @@index([conversationKey])
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         UserRole @default(OPERATOR)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([role])
+  @@index([active])
+}
+
+model OrderField {
+  id         String           @id @default(uuid()) @db.Uuid
+  orderId    String           @db.Uuid
+  key        String
+  label      String
+  value      String?
+  source     OrderFieldSource @default(EMAIL)
+  required   Boolean          @default(false)
+  requirement FieldRequirement @default(OPTIONAL)
+  missing    Boolean          @default(false)
+  confidence Float?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  order TransportOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, key])
+  @@index([orderId])
+  @@index([missing])
+  @@index([source])
+}
+
+enum OrderFieldSource {
+  EMAIL
+  REGEX
+  ATTACHMENT
+  OCR
+  AI
+  GENERATED
+  CALCULATED
+}
+
+model MissingField {
+  id        String   @id @default(uuid()) @db.Uuid
+  orderId   String   @db.Uuid
+  key       String
+  label     String
+  requirement FieldRequirement @default(REQUIRED)
+  reason    String?
+  createdAt DateTime @default(now())
+
+  order TransportOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+}
+
+model ValidationWarning {
+  id          String           @id @default(uuid()) @db.Uuid
+  orderId     String           @db.Uuid
+  key         String
+  label       String
+  requirement FieldRequirement @default(RECOMMENDED)
+  reason      String?
+  createdAt   DateTime         @default(now())
+
+  order TransportOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([requirement])
+}
+
+model AiRequest {
+  id           String   @id @default(uuid()) @db.Uuid
+  orderId      String   @db.Uuid
+  payloadJson  Json
+  responseJson Json?
+  status       String   @default("PENDING")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  order      TransportOrder      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  replyDraft CustomerReplyDraft? @relation("AiRequestReplyDraft")
+
+  @@index([orderId])
+  @@index([status])
+}
+
+model CustomerReplyDraft {
+  id          String                   @id @default(uuid()) @db.Uuid
+  orderId     String                   @db.Uuid
+  aiRequestId String?                  @unique @db.Uuid
+  toEmail     String
+  subject     String
+  body        String
+  status      CustomerReplyDraftStatus @default(DRAFT)
+  sentAt      DateTime?
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+
+  order     TransportOrder @relation("OrderReplyDraft", fields: [orderId], references: [id], onDelete: Cascade)
+  aiRequest AiRequest?     @relation("AiRequestReplyDraft", fields: [aiRequestId], references: [id], onDelete: SetNull)
+
+  @@unique([orderId])
+  @@index([status])
+  @@index([aiRequestId])
+}
+
+model XmlDelivery {
+  id              String            @id @default(uuid()) @db.Uuid
+  orderId         String            @db.Uuid
+  xmlPayload      String
+  status          XmlDeliveryStatus @default(PENDING)
+  requestPayload  String?
+  responsePayload String?
+  errorMessage    String?
+  sentAt          DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  order TransportOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([status])
+}
+
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  entityType  String
+  entityId    String
+  action      String
+  detailsJson Json?
+  createdAt   DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+model SystemSettings {
+  id                         String   @id @default("default")
+  // MANUAL | AUTOMATIC
+  syncMode                   String   @default("AUTOMATIC")
+  // MANUAL | SELECTIVE | AUTONOMOUS
+  deliveryMode               String   @default("MANUAL")
+  autoXmlConfidenceThreshold Float    @default(0.9)
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+}

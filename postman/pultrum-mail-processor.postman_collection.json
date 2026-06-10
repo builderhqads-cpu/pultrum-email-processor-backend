@@ -1,0 +1,333 @@
+{
+  "info": {
+    "name": "pultrum-mail-processor",
+    "description": "Colecao para testar rotas do backend pultrum-mail-processor.\n\nVariaveis (Collection Variables):\n- baseUrl (ex: http://localhost:3000)\n- mailboxId (UUID de Mailbox para /mailboxes/:id/sync)\n\nObs:\n- /auth/microsoft e /auth/callback envolvem redirect/OAuth; normalmente e mais facil testar abrindo no browser.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Emails",
+      "item": [
+        {
+          "name": "Emails - GET /emails",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/emails",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "emails"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Emails - GET /emails/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/emails/{{emailId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "emails",
+                "{{emailId}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Orders",
+      "item": [
+        {
+          "name": "Orders - GET /orders",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/orders",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Orders - GET /orders/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/orders/{{orderId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "{{orderId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Orders - POST /orders/:id/reprocess",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/orders/{{orderId}}/reprocess",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "{{orderId}}",
+                "reprocess"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Orders - POST /orders/:id/send-ai-request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/orders/{{orderId}}/send-ai-request",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "{{orderId}}",
+                "send-ai-request"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Orders - POST /orders/:id/send-xml",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/orders/{{orderId}}/send-xml",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "{{orderId}}",
+                "send-xml"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health - GET /health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Root - GET /",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            ""
+          ]
+        }
+      }
+    },
+    {
+      "name": "Queues - POST /queues/test",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/queues/test",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "queues",
+            "test"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Mail - POST /mailbox/sync (Auto)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/mailbox/sync",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "mailbox",
+            "sync"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Mailboxes - POST /mailboxes/:id/sync",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/mailboxes/{{mailboxId}}/sync",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "mailboxes",
+            "{{mailboxId}}",
+            "sync"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Auth - GET /auth/microsoft (Redirect)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/auth/microsoft",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "microsoft"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Auth - GET /auth/callback (Redirect)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/auth/callback",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "callback"
+          ]
+        }
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "mailboxId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "emailId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "orderId",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}
