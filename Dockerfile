@@ -37,4 +37,5 @@ COPY package*.json ./
 EXPOSE 3000
 
 # Apply pending migrations on boot, then start the API.
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main"]
+# Build output is nested under dist/src because the repo also compiles scripts/.
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/src/main"]
