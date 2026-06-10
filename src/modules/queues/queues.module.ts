@@ -15,12 +15,23 @@ import { QueuesService } from './queues.service';
   imports: [
     BullModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        connection: {
-          host: configService.get<string>('REDIS_HOST', 'localhost'),
-          port: Number(configService.get('REDIS_PORT', 6379)),
-        },
-      }),
+      useFactory: (configService: ConfigService) => {
+        const password = (
+          configService.get<string>('REDIS_PASSWORD') || ''
+        ).trim();
+        const username = (
+          configService.get<string>('REDIS_USERNAME') || ''
+        ).trim();
+        return {
+          connection: {
+            host: configService.get<string>('REDIS_HOST', 'localhost'),
+            port: Number(configService.get('REDIS_PORT', 6379)),
+            // Managed Redis (e.g. Easypanel) is created with a password.
+            ...(password ? { password } : {}),
+            ...(username ? { username } : {}),
+          },
+        };
+      },
     }),
     BullModule.registerQueue(
       { name: QUEUE_MAILBOX_SYNC },
