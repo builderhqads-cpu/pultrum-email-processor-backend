@@ -102,6 +102,56 @@ export function extractLabeledFields(text: string) {
   return result;
 }
 
+/**
+ * Ambiguous single-token aliases that must NOT drive the catalog fallback —
+ * they would grab the wrong value (e.g. a bare "Reference:" line holding the
+ * PULTRUM token, or loose "till"/"unit"/"weight"/"price"). When these genuinely
+ * need to be mapped, the curated labelToKeys map handles them explicitly.
+ */
+const AMBIGUOUS_FALLBACK_ALIASES = new Set([
+  'till',
+  'ref',
+  'reference',
+  'price',
+  'weight',
+  'unit',
+  'units',
+  'goods',
+  'cargo',
+  'notes',
+  'remarks',
+  'instructions',
+  'sender',
+  'permit',
+  'permits',
+  'escort',
+  'quantity',
+  'product',
+]);
+
+/**
+ * Alias -> field keys index built from the field catalog. Used as a fallback
+ * when an extracted label is not present in the curated labelToKeys map, so the
+ * catalog and the deterministic parser cannot silently drift apart. Very short
+ * (< 4 chars) and ambiguous aliases are skipped to avoid mismapping.
+ */
+export const ALIAS_FALLBACK_INDEX: Map<string, string[]> = (() => {
+  const index = new Map<string, string[]>();
+  const add = (alias: string | undefined, key: string) => {
+    const norm = normalizeLabel(alias ?? '');
+    if (!norm || norm.length < 4) return;
+    if (AMBIGUOUS_FALLBACK_ALIASES.has(norm)) return;
+    const list = index.get(norm) ?? [];
+    if (!list.includes(key)) list.push(key);
+    index.set(norm, list);
+  };
+  for (const rule of TRANSPORT_BOOKING_FIELD_RULES) {
+    add(rule.label, rule.key);
+    for (const alias of rule.aliases ?? []) add(alias, rule.key);
+  }
+  return index;
+})();
+
 export type TransportBookingValidationResult = {
   detectedFields: Array<{
     key: string;
@@ -698,6 +748,18 @@ export class TransportBookingValidationService {
         'reference',
       ],
       [normalizeLabel('Price')]: ['price'],
+
+      // Recommended "till" times + product description (commonly supplied in
+      // customer replies; were missing from the curated map above).
+      [normalizeLabel('Pickup time till')]: ['pickup_time_till'],
+      [normalizeLabel('Pickup time to')]: ['pickup_time_till'],
+      [normalizeLabel('Laadtijd tot')]: ['pickup_time_till'],
+      [normalizeLabel('Delivery time till')]: ['delivery_time_till'],
+      [normalizeLabel('Delivery time to')]: ['delivery_time_till'],
+      [normalizeLabel('Lostijd tot')]: ['delivery_time_till'],
+      [normalizeLabel('Aflevertijd tot')]: ['delivery_time_till'],
+      [normalizeLabel('Product description')]: ['product_description'],
+      [normalizeLabel('Productomschrijving')]: ['product_description'],
     };
 
     const baseMap = new Map<string, string>();
@@ -705,7 +767,9 @@ export class TransportBookingValidationService {
     const sourceByKey = new Map<string, OrderFieldSource>();
 
     for (const [label, value] of extracted.entries()) {
-      const keys = labelToKeys[label] ?? null;
+      // Curated map first; fall back to the catalog alias index so new fields
+      // don't silently go undetected just because the curated map missed them.
+      const keys = labelToKeys[label] ?? ALIAS_FALLBACK_INDEX.get(label) ?? null;
       if (!keys?.length) continue;
       for (const key of keys) {
         const cleaned = sanitizeExtractedValue(value);
