@@ -251,7 +251,9 @@ export class OrdersService {
         fields: true,
         missingFields: true,
         validationWarnings: true,
-        aiRequests: true,
+        aiRequests: {
+          include: { replyDraft: { select: { id: true } } },
+        },
         xmlDeliveries: true,
         replyDraft: true,
       },
@@ -259,8 +261,15 @@ export class OrdersService {
 
     if (!order) throw new NotFoundException(`Order not found: id=${id}`);
     const aiExtraction = await this.buildAiExtractionSummary(order);
+    // Derive the AI request type (no DB column): a request linked to a customer
+    // reply draft is a reply generation; everything else is processing.
+    const aiRequests = order.aiRequests.map(({ replyDraft, ...request }) => ({
+      ...request,
+      type: replyDraft ? 'REPLY' : 'PROCESSING',
+    }));
     return {
       ...order,
+      aiRequests,
       aiExtraction,
     };
   }
