@@ -3,6 +3,7 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import {
   AttachmentExtractionStatus,
+  Department,
   EmailLinkMethod,
   EmailStatus,
   OrderStatus,
@@ -611,6 +612,29 @@ export class EmailProcessingProcessor extends WorkerHost {
       include: { mailbox: true, attachments: true },
     });
     const emailForValidation = withExtracted ?? emailForProcessing;
+
+    // Department gate: this pipeline only handles OPEN_TRANSPORT mailboxes.
+    // Other departments (e.g. STUK_GOED) are still synced and stored, but parked
+    // here until their own pipeline exists — no TransportOrder is created. The
+    // mailbox is included on the query; if it's somehow missing we let it proceed
+    // (never drop an email because of this gate).
+    const mailboxDepartment = emailForValidation.mailbox?.department;
+    if (mailboxDepartment && mailboxDepartment !== Department.OPEN_TRANSPORT) {
+      await this.auditLogService.log({
+        entityType: 'EmailMessage',
+        entityId: emailForValidation.id,
+        action: 'EMAIL_PARKED_DEPARTMENT_INACTIVE',
+        detailsJson: { department: mailboxDepartment },
+      });
+      await this.prismaService.emailMessage.update({
+        where: { id: emailForValidation.id },
+        data: { status: EmailStatus.PROCESSED },
+      });
+      this.logger.log(
+        `Email parked (department ${mailboxDepartment} not handled by this pipeline) emailMessageId=${emailForValidation.id}`,
+      );
+      return;
+    }
 
     await this.prismaService.emailMessage.update({
       where: { id: emailForValidation.id },
