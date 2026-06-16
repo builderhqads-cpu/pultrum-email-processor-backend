@@ -107,6 +107,14 @@ export class AuthController {
     return this.authService.login(body?.email, body?.password);
   }
 
+  @Post('register')
+  register(
+    @Body()
+    body: { name: string; email: string; password: string; code: string },
+  ) {
+    return this.authService.register(body);
+  }
+
   @Get('me')
   @UseGuards(JwtAuthGuard)
   me(@Req() req: RequestWithUser) {
