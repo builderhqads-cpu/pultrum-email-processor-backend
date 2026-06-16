@@ -18,6 +18,8 @@ export class EmailsService {
       select: {
         id: true,
         graphMessageId: true,
+        conversationId: true,
+        threadKey: true,
         fromEmail: true,
         subject: true,
         receivedAt: true,
@@ -40,6 +42,8 @@ export class EmailsService {
     return emails.map((e) => ({
       id: e.id,
       providerMessageId: e.graphMessageId,
+      conversationId: e.conversationId,
+      threadKey: e.threadKey,
       fromEmail: e.fromEmail,
       subject: e.subject,
       receivedAt: e.receivedAt,

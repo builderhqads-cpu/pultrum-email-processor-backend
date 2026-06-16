@@ -61,7 +61,9 @@ export class GraphAuthService {
       'profile',
       'offline_access',
       'User.Read',
-      'Mail.Read',
+      // Mail.ReadWrite (superset of Mail.Read) is required for Graph's native
+      // createReply (draft creation) used to thread reply emails.
+      'Mail.ReadWrite',
       'Mail.Send',
     ];
   }

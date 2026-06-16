@@ -36,7 +36,7 @@ export class GraphMailProvider implements MailProvider {
       .top(limit)
       .orderby('receivedDateTime desc')
       .select(
-        'id,conversationId,from,subject,bodyPreview,body,receivedDateTime,hasAttachments',
+        'id,conversationId,internetMessageId,from,subject,bodyPreview,body,receivedDateTime,hasAttachments',
       )
       .get();
 
@@ -76,10 +76,16 @@ export class GraphMailProvider implements MailProvider {
         rawMimeBase64 = undefined;
       }
 
+      const internetMessageId = (m as { internetMessageId?: string })
+        .internetMessageId;
+
       normalized.push({
         provider: 'graph',
         providerMessageId: m.id,
         conversationId: m.conversationId,
+        // RFC 5322 Message-ID — needed to thread our outgoing reply and to link
+        // the customer's reply back via References.
+        messageIdHeader: internetMessageId || undefined,
         fromEmail,
         fromName,
         subject: m.subject ?? '',

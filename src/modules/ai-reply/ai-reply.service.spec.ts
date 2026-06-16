@@ -59,8 +59,9 @@ describe('AiReplyService', () => {
     expect(prismaService.customerReplyDraft.upsert).toHaveBeenCalled();
 
     const upsertArgs = prismaService.customerReplyDraft.upsert.mock.calls[0][0];
-    expect(upsertArgs.create.subject).toContain('[PULTRUM-3ce4d976]');
-    expect(upsertArgs.create.body).toContain('Reference: [PULTRUM-3ce4d976]');
+    // No token in subject or body — linking is by conversationId / headers only.
+    expect(upsertArgs.create.subject).not.toContain('[PULTRUM-3ce4d976]');
+    expect(upsertArgs.create.body).not.toContain('[PULTRUM-3ce4d976]');
     expect(upsertArgs.create.status).toBe('DRAFT');
   });
 });

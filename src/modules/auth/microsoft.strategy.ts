@@ -47,7 +47,9 @@ export class MicrosoftStrategy extends PassportStrategy(
         'profile',
         'offline_access',
         'User.Read',
-        'Mail.Read',
+        // Mail.ReadWrite (superset of Mail.Read) is required to thread replies
+        // via Graph's native createReply (it creates a draft).
+        'Mail.ReadWrite',
         'Mail.Send',
       ],
       scopeSeparator: ' ',

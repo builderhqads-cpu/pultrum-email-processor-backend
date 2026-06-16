@@ -44,9 +44,9 @@ export class AiClientService {
     return '';
   }
 
-  private buildDraftSubject(orderId: string) {
-    const short = (orderId || '').split('-')[0] || '';
-    return `Aanvullende informatie nodig - [PULTRUM-${short}]`;
+  private buildDraftSubject(_orderId: string) {
+    // Subject stays clean (no token); linking is by conversationId/headers + body token.
+    return 'Aanvullende informatie nodig';
   }
 
   private buildReplyToken(orderId: string) {
@@ -55,21 +55,18 @@ export class AiClientService {
     return `PULTRUM-${short}`;
   }
 
-  private ensureTokenInBody(body: string, token: string | null) {
-    const trimmed = (body || '').toString().trim();
-    if (!token) return trimmed;
-    const marker = `[${token}]`;
-    if (trimmed.includes(marker)) return trimmed;
-    return `${trimmed}\n\nReference: ${marker}`;
+  private ensureTokenInBody(body: string, _token: string | null) {
+    // No token in the body — linking relies on conversationId / headers only.
+    return (body || '').toString().trim();
   }
 
-  private ensureTokenInSubject(subject: string, token: string | null) {
-    const s = (subject || '').toString().trim();
-    if (!token) return s;
-    const marker = `[${token}]`;
-    if (!s) return `Aanvullende informatie nodig - ${marker}`;
-    if (s.includes(marker)) return s;
-    return `${s} - ${marker}`;
+  private ensureTokenInSubject(subject: string, _token: string | null) {
+    // Token kept in the body only; subject stays clean/editable.
+    const s = (subject || '')
+      .toString()
+      .replace(/\s*-?\s*\[(?:PULTRUM|RENOVO)-[^\]]+\]/gi, '')
+      .trim();
+    return s || 'Aanvullende informatie nodig';
   }
 
   private extractSuggestedReply(responseBody: any): string | null {

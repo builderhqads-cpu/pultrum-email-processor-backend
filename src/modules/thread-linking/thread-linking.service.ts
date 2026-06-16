@@ -90,6 +90,23 @@ export class ThreadLinkingService {
       if (byToken) return { type: EmailLinkMethod.REPLY_TOKEN, orderId: byToken.id };
     }
 
+    // 1.5) Conversation-based link (Graph keeps the same conversationId across a
+    // whole thread). Very reliable for Graph and independent of the subject, so
+    // an operator can freely edit the reply subject without breaking linking.
+    const conversationId = (context.conversationId || '').toString().trim();
+    if (conversationId) {
+      const candidates = await this.prismaService.emailMessage.findMany({
+        where: { id: { not: emailMessageId }, conversationId },
+        orderBy: { receivedAt: 'desc' },
+        take: 10,
+        select: { order: { select: { id: true } }, linkedOrderId: true },
+      });
+      for (const c of candidates) {
+        const orderId = c.order?.id ?? c.linkedOrderId ?? null;
+        if (orderId) return { type: EmailLinkMethod.REFERENCES, orderId };
+      }
+    }
+
     // 2) Header linking via In-Reply-To
     const inReplyToIds = this.parseMessageIdList(context.inReplyToHeader);
     if (inReplyToIds.length) {

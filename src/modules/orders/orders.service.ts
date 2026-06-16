@@ -390,12 +390,7 @@ export class OrdersService {
       throw new NotFoundException(
         `Reply draft not found for orderId=${orderId}`,
       );
-    if (draft.status !== 'DRAFT') {
-      return {
-        ok: false,
-        message: `Draft is not sendable (status=${draft.status})`,
-      };
-    }
+    // Resending is allowed (e.g. reminders) — no status guard.
 
     const order = await this.prismaService.transportOrder.findUnique({
       where: { id: orderId },
@@ -416,9 +411,13 @@ export class OrdersService {
       body: normalizeEscapedNewlines(draft.body),
       // Optional Reply-To for inbound replies
       replyTo: null,
-      // Threading headers (if we have them from the original inbound email)
+      // SMTP threading headers (Graph uses native reply below instead).
       inReplyTo: order.emailMessage?.messageIdHeader ?? null,
       references: order.emailMessage?.messageIdHeader ?? null,
+      // Graph: reply natively to the original message so it threads.
+      replyToGraphMessageId: order.emailMessage?.graphMessageId ?? null,
+      // Per-mailbox signature (production); empty in test.
+      signature: order.emailMessage?.mailbox?.signature ?? null,
     });
 
     await this.prismaService.customerReplyDraft.update({
