@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -105,5 +106,35 @@ export class AuthService {
       active: true,
     });
     return this.buildSession(user);
+  }
+
+  async resetPassword(input: { email: string; password: string; code: string }) {
+    // Same shared code as registration. Empty REGISTRATION_CODE disables it.
+    const expected = (
+      this.configService.get<string>('REGISTRATION_CODE') || ''
+    ).trim();
+    if (!expected) {
+      throw new ForbiddenException('Password reset is disabled');
+    }
+    if ((input.code || '').trim() !== expected) {
+      throw new ForbiddenException('Invalid code');
+    }
+
+    const email = (input.email || '').trim().toLowerCase();
+    const password = input.password || '';
+    if (!email || password.length < 6) {
+      throw new BadRequestException(
+        'Email and a new password (min. 6 characters) are required',
+      );
+    }
+
+    const user = await this.usersService.findByEmail(email);
+    if (!user) {
+      throw new NotFoundException('No account found for this email');
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    await this.usersService.updatePassword(user.id, passwordHash);
+    return { ok: true };
   }
 }
