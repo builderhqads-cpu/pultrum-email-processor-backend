@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import pdfParse from 'pdf-parse';
 import mammoth from 'mammoth';
 import * as xlsx from 'xlsx';
+import JSZip from 'jszip';
 import { AttachmentExtractionStatus } from '@prisma/client';
 import { OcrService } from '../ocr/ocr.service';
 
@@ -176,7 +177,100 @@ export class AttachmentExtractionService {
       return 'docx';
     }
 
+    if (
+      mime.startsWith('image/') ||
+      /\.(png|jpe?g|webp|gif|bmp|tiff?)$/.test(name)
+    ) {
+      return 'image';
+    }
+
     return 'unknown';
+  }
+
+  private async handleImageOcr(input: {
+    attachmentId?: string;
+    fileName?: string | null;
+    mimeType?: string | null;
+    buffer: Buffer;
+  }): Promise<AttachmentExtractionResult> {
+    if (this.ocrService.isEnabled()) {
+      const ocr = await this.ocrService.extractTextFromImage({
+        fileName: input.fileName ?? null,
+        mimeType: input.mimeType ?? null,
+        buffer: input.buffer,
+      });
+
+      if (ocr?.text?.trim()) {
+        return {
+          extractedText: this.normalizeExtractedText(ocr.text),
+          extractionMethod: ocr.method,
+          extractionStatus: AttachmentExtractionStatus.SUCCESS,
+        };
+      }
+
+      return {
+        extractedText: null,
+        extractionMethod: 'OCR_NO_TEXT',
+        extractionStatus: AttachmentExtractionStatus.FAILED,
+      };
+    }
+
+    this.logger.log(
+      `Image requires OCR (OCR_ENABLED=false) attachmentId=${input.attachmentId ?? 'n/a'} fileName=${input.fileName ?? 'n/a'}`,
+    );
+
+    return {
+      extractedText: null,
+      extractionMethod: 'IMAGE_OCR_REQUIRED',
+      extractionStatus: AttachmentExtractionStatus.OCR_REQUIRED,
+    };
+  }
+
+  private guessImageMime(name: string): string {
+    const n = (name || '').toLowerCase();
+    if (n.endsWith('.jpg') || n.endsWith('.jpeg')) return 'image/jpeg';
+    if (n.endsWith('.webp')) return 'image/webp';
+    if (n.endsWith('.gif')) return 'image/gif';
+    if (n.endsWith('.bmp')) return 'image/bmp';
+    if (n.endsWith('.tif') || n.endsWith('.tiff')) return 'image/tiff';
+    return 'image/png';
+  }
+
+  // OCR images embedded inside a DOCX (word/media/*) so data that lives only in
+  // an image isn't lost. Skips tiny images (icons) and caps the count to bound cost.
+  private async extractDocxImageText(buffer: Buffer): Promise<string> {
+    if (!this.ocrService.isEnabled()) return '';
+    try {
+      const zip = await JSZip.loadAsync(buffer);
+      const entries = Object.values(zip.files).filter(
+        (f) =>
+          !f.dir &&
+          /^word\/media\//i.test(f.name) &&
+          /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(f.name),
+      );
+      if (!entries.length) return '';
+
+      const texts: string[] = [];
+      let processed = 0;
+      for (const entry of entries) {
+        if (processed >= 8) break;
+        const imgBuffer = (await entry.async('nodebuffer')) as Buffer;
+        if (imgBuffer.length < 8 * 1024) continue; // skip icons/decorations
+        processed++;
+        const ocr = await this.ocrService.extractTextFromImage({
+          fileName: entry.name,
+          mimeType: this.guessImageMime(entry.name),
+          buffer: imgBuffer,
+        });
+        if (ocr?.text?.trim()) texts.push(ocr.text.trim());
+      }
+      return texts.join('\n\n');
+    } catch (err: any) {
+      this.logger.warn(
+        `DOCX embedded-image OCR failed: ${err?.message ?? err}`,
+      );
+      return '';
+    }
   }
 
   private normalizeExtractedText(text: string | null) {
@@ -302,11 +396,36 @@ export class AttachmentExtractionService {
 
       if (kind === 'docx') {
         const result = await mammoth.extractRawText({ buffer });
+        const docText = this.normalizeExtractedText(result?.value || '') || '';
+
+        // Also OCR images embedded in the docx so image-only data isn't lost.
+        const rawImageText = await this.extractDocxImageText(buffer);
+        const imageText = rawImageText
+          ? this.normalizeExtractedText(rawImageText)
+          : null;
+
+        const parts = [docText];
+        if (imageText) {
+          parts.push(`[Afbeeldingen / image text]\n${imageText}`);
+        }
+        const combined = parts.filter((p) => p && p.trim()).join('\n\n');
+
         return {
-          extractedText: this.normalizeExtractedText(result?.value || ''),
-          extractionMethod: 'MAMMOTH_RAW_TEXT',
+          extractedText: combined || null,
+          extractionMethod: imageText
+            ? 'MAMMOTH_RAW_TEXT+IMAGE_OCR'
+            : 'MAMMOTH_RAW_TEXT',
           extractionStatus: AttachmentExtractionStatus.SUCCESS,
         };
+      }
+
+      if (kind === 'image') {
+        return this.handleImageOcr({
+          attachmentId: input.attachmentId,
+          fileName: input.fileName,
+          mimeType: input.mimeType,
+          buffer,
+        });
       }
 
       return {

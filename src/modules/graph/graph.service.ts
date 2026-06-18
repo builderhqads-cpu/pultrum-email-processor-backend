@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { GraphAuthService } from './graph-auth.service';
 import { ResponseType } from '@microsoft/microsoft-graph-client';
 import { NormalizedAttachment } from '../../mail/providers/mail-provider.interface';
@@ -7,7 +8,10 @@ import { NormalizedAttachment } from '../../mail/providers/mail-provider.interfa
 export class GraphService {
   private readonly logger = new Logger(GraphService.name);
 
-  constructor(private readonly graphAuthService: GraphAuthService) {}
+  constructor(
+    private readonly graphAuthService: GraphAuthService,
+    private readonly configService: ConfigService,
+  ) {}
 
   async getRecentMessages(mailboxEmail: string, top = 10) {
     const client = await this.graphAuthService.getAuthenticatedClient(
@@ -47,7 +51,11 @@ export class GraphService {
     const items = (listResponse?.value ?? []) as Array<any>;
     if (!items.length) return [];
 
-    const maxBase64Bytes = 1024 * 1024; // 1 MiB
+    // Max attachment size to download/extract. Real transport documents (DOCX
+    // with route maps, multi-page PDFs) easily exceed 1 MiB, so default to 15.
+    const maxMb =
+      Number(this.configService.get<string>('ATTACHMENT_MAX_MB') || '15') || 15;
+    const maxBase64Bytes = maxMb * 1024 * 1024;
 
     const results: NormalizedAttachment[] = [];
 
@@ -57,6 +65,16 @@ export class GraphService {
 
       const name = (att?.name ?? '').toString() || `attachment-${id}`;
       const contentType = (att?.contentType ?? '').toString() || undefined;
+
+      // Skip inline images (signature logos, social icons embedded in the body
+      // via content-id). They are part of the message, not real attachments.
+      if (
+        att?.isInline === true &&
+        (contentType || '').toLowerCase().startsWith('image/')
+      ) {
+        continue;
+      }
+
       const size =
         typeof att?.size === 'number'
           ? att.size

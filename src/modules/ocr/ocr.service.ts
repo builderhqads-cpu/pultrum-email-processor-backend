@@ -47,5 +47,28 @@ export class OcrService {
     );
     return null;
   }
+
+  async extractTextFromImage(
+    input: OcrExtractInput,
+  ): Promise<OcrExtractOutput | null> {
+    const provider = this.getProvider();
+
+    if (provider === 'openrouter') {
+      const text = await this.openRouterOcrService.ocrImage(input);
+      if (text && text.trim()) {
+        return {
+          text,
+          provider: 'openrouter',
+          method: 'OPENROUTER_VISION_OCR',
+        };
+      }
+      return null;
+    }
+
+    this.logger.log(
+      `Image OCR provider not implemented yet (provider=${provider}). Skipping.`,
+    );
+    return null;
+  }
 }
 
