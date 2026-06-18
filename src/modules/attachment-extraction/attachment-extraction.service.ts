@@ -22,6 +22,45 @@ const normalizeText = (text: string) =>
     .replace(/[ \t]+\n/g, '\n')
     .trim();
 
+/**
+ * Custom pdf-parse page renderer that preserves layout: inserts a space on a
+ * horizontal gap between text runs (e.g. table columns) and a newline on a line
+ * change. The default renderer concatenates same-line runs without a space,
+ * gluing labels to values ("Leverdatum12-06-2026").
+ */
+async function renderPdfPage(pageData: any): Promise<string> {
+  const textContent = await pageData.getTextContent({
+    normalizeWhitespace: true,
+    disableCombineTextItems: false,
+  });
+  let text = '';
+  let lastY: number | undefined;
+  let lastXEnd: number | undefined;
+  for (const item of (textContent.items ?? []) as Array<any>) {
+    const str = (item?.str ?? '').toString();
+    const x = item?.transform?.[4] ?? 0;
+    const y = item?.transform?.[5] ?? 0;
+    const width = item?.width ?? 0;
+
+    if (lastY !== undefined && Math.abs(y - lastY) > 2) {
+      if (!text.endsWith('\n')) text += '\n';
+      lastXEnd = undefined;
+    } else if (
+      lastXEnd !== undefined &&
+      x - lastXEnd > 1 &&
+      !text.endsWith(' ') &&
+      !text.endsWith('\n')
+    ) {
+      text += ' ';
+    }
+
+    text += str;
+    lastY = y;
+    lastXEnd = x + width;
+  }
+  return text;
+}
+
 @Injectable()
 export class AttachmentExtractionService {
   private readonly logger = new Logger(AttachmentExtractionService.name);
@@ -336,7 +375,9 @@ export class AttachmentExtractionService {
 
       if (kind === 'pdf') {
         try {
-          const result = await pdfParse(buffer);
+          const result = await pdfParse(buffer, {
+            pagerender: renderPdfPage,
+          } as any);
           const extracted = this.normalizeExtractedText(result?.text || '');
 
           if (!extracted) {
@@ -398,8 +439,11 @@ export class AttachmentExtractionService {
         const result = await mammoth.extractRawText({ buffer });
         const docText = this.normalizeExtractedText(result?.value || '') || '';
 
-        // Also OCR images embedded in the docx so image-only data isn't lost.
-        const rawImageText = await this.extractDocxImageText(buffer);
+        // OCR embedded images ONLY when the document text is sparse (an
+        // image-heavy doc). For text-rich docs the images are usually logos or
+        // maps, so OCR'ing them just adds noise (e.g. street names).
+        const rawImageText =
+          docText.length < 300 ? await this.extractDocxImageText(buffer) : '';
         const imageText = rawImageText
           ? this.normalizeExtractedText(rawImageText)
           : null;

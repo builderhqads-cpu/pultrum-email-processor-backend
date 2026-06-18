@@ -490,16 +490,32 @@ export class EmailProcessingProcessor extends WorkerHost {
 
   private detectLanguage(text: string) {
     const t = (text || '').toLowerCase();
+
+    // Strong, transport-specific NL signal.
     if (
-      /(laaddatum|losdatum|laadreferentie|losreferentie|laadtijd|lostijd)/i.test(
+      /(laaddatum|losdatum|laadreferentie|losreferentie|laadtijd|lostijd)/.test(
         t,
       )
     )
       return 'nl';
-    if (/(pickup|delivery|loading|unloading)/i.test(t)) return 'en';
-    if (/(carregamento|descarga|retirada|entrega|endereco|endereço)/i.test(t))
-      return 'pt';
-    return 'unknown';
+
+    // Otherwise score common words per language (catches plain-prose emails).
+    const count = (re: RegExp) => (t.match(re) || []).length;
+    const nl = count(
+      /\b(het|een|voor|met|niet|geachte|bijlage|vrijdag|groet|levering|afspraak|worden|zijn|naar|uur|ophalen|afleveren)\b/g,
+    );
+    const pt = count(
+      /\b(para|n[ãa]o|com|endere[çc]o|entrega|coleta|sauda[çc][õo]es|anexo|favor|obrigado)\b/g,
+    );
+    const en = count(
+      /\b(the|and|for|with|please|regards|attached|pickup|delivery|from|your|loading|unloading)\b/g,
+    );
+
+    const max = Math.max(nl, pt, en);
+    if (max < 2) return 'unknown';
+    if (nl === max) return 'nl';
+    if (pt === max) return 'pt';
+    return 'en';
   }
 
   private shouldUseAiExtraction(input: {
@@ -688,6 +704,10 @@ export class EmailProcessingProcessor extends WorkerHost {
         .filter((x: string) => x.length > 0)
         .join('\n\n');
 
+      // Language detected by the AI classifier (more reliable than the keyword
+      // heuristic); used for the extraction payload below.
+      let classifiedLanguage: string | null = null;
+
       // AI classification gate (new, non-reply emails only). Replies are handled
       // above and never reach this point. Safety net: if the classifier is
       // disabled/unavailable/undecided it returns null and we proceed as before,
@@ -708,6 +728,7 @@ export class EmailProcessingProcessor extends WorkerHost {
         });
 
         if (aiClassification) {
+          classifiedLanguage = aiClassification.language ?? null;
           await this.prismaService.emailMessage.update({
             where: { id: emailForValidation.id },
             data: {
@@ -878,7 +899,12 @@ export class EmailProcessingProcessor extends WorkerHost {
           ),
           missingFields: deterministic.missingFields,
           department: order.department ?? null,
-          language: this.detectLanguage(combinedText),
+          language:
+            [
+              classifiedLanguage,
+              (emailForValidation as any).classificationLanguage,
+            ].find((l): l is string => Boolean(l) && l !== 'unknown') ||
+            this.detectLanguage(combinedText),
           emailMetadata: {
             fromEmail: emailForValidation.fromEmail ?? null,
             fromName: emailForValidation.fromName ?? null,
