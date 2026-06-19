@@ -17,6 +17,18 @@ export class OcrService {
     return ['1', 'true', 'yes', 'y', 'on'].includes(raw.toLowerCase());
   }
 
+  /**
+   * Image (computer-vision) OCR is gated separately and OFF by default.
+   * Photos cost ~4x the tokens, so for now images are attached but NOT
+   * processed. Flip IMAGE_OCR_ENABLED=true to re-enable vision OCR.
+   */
+  imageOcrEnabled() {
+    const raw = (
+      this.configService.get<string>('IMAGE_OCR_ENABLED') ?? ''
+    ).trim();
+    return ['1', 'true', 'yes', 'y', 'on'].includes(raw.toLowerCase());
+  }
+
   private getProvider(): OcrProviderName {
     const raw = (this.configService.get<string>('OCR_PROVIDER') || 'openrouter')
       .trim()

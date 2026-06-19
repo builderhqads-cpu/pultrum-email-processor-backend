@@ -16,6 +16,7 @@ import {
   TransportBookingFieldRule,
 } from '../required-fields/transport-booking-field-rules';
 import { sanitizeExtractedValue } from '../../utils/sanitize';
+import { normalizeFieldMap, parseDecimal } from '../../utils/field-normalize';
 import { SystemSettingsService } from '../system-settings/system-settings.service';
 
 const normalizeWhitespace = (value: string) =>
@@ -221,15 +222,7 @@ export class TransportBookingValidationService {
   }
 
   private parseNumber(value: string | null | undefined) {
-    if (!value) return null;
-    const normalized = value
-      .toString()
-      .trim()
-      .replace(',', '.')
-      .match(/[0-9]+(?:\.[0-9]+)?/);
-    if (!normalized) return null;
-    const num = Number.parseFloat(normalized[0]);
-    return Number.isFinite(num) ? num : null;
+    return parseDecimal(value);
   }
 
   private calcVolume(params: {
@@ -274,12 +267,6 @@ export class TransportBookingValidationService {
     const ts = Date.now().toString(36).toUpperCase();
     const rnd = Math.random().toString(36).slice(2, 6).toUpperCase();
     return `EDI-${ts}${rnd}`;
-  }
-
-  private generateBarcode(seed: string) {
-    const short = (seed || '').split('-')[0] || 'NA';
-    const ts = Date.now().toString(36).toUpperCase();
-    return `BC-${short}-${ts}`;
   }
 
   private buildRenovoToken(orderId: string) {
@@ -393,11 +380,9 @@ export class TransportBookingValidationService {
     );
     confidenceByKey.set('shipment_edireference', 1.0);
 
-    map.set(
-      'barcode',
-      sanitizeExtractedValue(map.get('barcode') || '') ||
-        this.generateBarcode(input.orderId),
-    );
+    // Barcode is NOT auto-generated: only keep an explicitly provided value,
+    // otherwise it goes out blank (avoids "barcodes from nowhere" noise).
+    map.set('barcode', sanitizeExtractedValue(map.get('barcode') || ''));
     confidenceByKey.set('barcode', 1.0);
 
     // Calculated / derived fields
@@ -460,7 +445,7 @@ export class TransportBookingValidationService {
     map.set('goods_unit_id', map.get('goods_unit_id') || unitId);
     map.set('goods_weight', map.get('goods_weight') || weight);
 
-    // Loading meter: simple fallback to 0 when not provided
+    // Loading meter: compute when possible, otherwise leave BLANK (never "0").
     const computedLdm = this.calcLoadingMeterCm({
       length: map.get('length'),
       width: map.get('width'),
@@ -469,11 +454,11 @@ export class TransportBookingValidationService {
     if (!map.get('cargo_loading_meter')) {
       map.set(
         'cargo_loading_meter',
-        computedLdm == null ? '0' : computedLdm.toFixed(3),
+        computedLdm == null ? '' : computedLdm.toFixed(3),
       );
     }
     if (!map.get('goods_loading_meter')) {
-      map.set('goods_loading_meter', map.get('cargo_loading_meter') || '0');
+      map.set('goods_loading_meter', map.get('cargo_loading_meter') || '');
     }
     confidenceByKey.set('cargo_loading_meter', 0.9);
     confidenceByKey.set('goods_loading_meter', 0.9);
@@ -493,6 +478,10 @@ export class TransportBookingValidationService {
     }
     confidenceByKey.set('cargo_volume', 0.9);
     confidenceByKey.set('goods_volume', 0.9);
+
+    // Final value cleanup: integer quantities, zero->blank measures, no
+    // city-as-name, street-only addresses. Runs after derivations/calcs.
+    normalizeFieldMap(map);
 
     // Keep detected list consistent with final map (so generated/calculated appear too)
     const finalDetected: TransportBookingValidationResult['detectedFields'] =

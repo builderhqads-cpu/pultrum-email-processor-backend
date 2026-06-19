@@ -232,7 +232,7 @@ export class AttachmentExtractionService {
     mimeType?: string | null;
     buffer: Buffer;
   }): Promise<AttachmentExtractionResult> {
-    if (this.ocrService.isEnabled()) {
+    if (this.ocrService.imageOcrEnabled()) {
       const ocr = await this.ocrService.extractTextFromImage({
         fileName: input.fileName ?? null,
         mimeType: input.mimeType ?? null,
@@ -254,14 +254,17 @@ export class AttachmentExtractionService {
       };
     }
 
+    // Image processing is paused (cost). The image is still attached to the
+    // order as-is; we just don't run vision OCR on it. Mark it as a non-error,
+    // neutral state so the panel shows no "extraction failed" message.
     this.logger.log(
-      `Image requires OCR (OCR_ENABLED=false) attachmentId=${input.attachmentId ?? 'n/a'} fileName=${input.fileName ?? 'n/a'}`,
+      `Image attached, OCR paused (IMAGE_OCR_ENABLED=false) attachmentId=${input.attachmentId ?? 'n/a'} fileName=${input.fileName ?? 'n/a'}`,
     );
 
     return {
       extractedText: null,
-      extractionMethod: 'IMAGE_OCR_REQUIRED',
-      extractionStatus: AttachmentExtractionStatus.OCR_REQUIRED,
+      extractionMethod: 'IMAGE_ATTACHED_NO_OCR',
+      extractionStatus: AttachmentExtractionStatus.SUCCESS,
     };
   }
 
@@ -278,7 +281,8 @@ export class AttachmentExtractionService {
   // OCR images embedded inside a DOCX (word/media/*) so data that lives only in
   // an image isn't lost. Skips tiny images (icons) and caps the count to bound cost.
   private async extractDocxImageText(buffer: Buffer): Promise<string> {
-    if (!this.ocrService.isEnabled()) return '';
+    // Embedded-image OCR is computer vision too -> gated by the image flag.
+    if (!this.ocrService.imageOcrEnabled()) return '';
     try {
       const zip = await JSZip.loadAsync(buffer);
       const entries = Object.values(zip.files).filter(

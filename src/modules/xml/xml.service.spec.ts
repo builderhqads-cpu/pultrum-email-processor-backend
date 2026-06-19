@@ -48,6 +48,8 @@ describe('XmlService unsafe HTML guard', () => {
 });
 
 describe('XmlService original documents packaging', () => {
+  // Note: inline logo/signature images are filtered out upstream (graph.service),
+  // so any image that reaches the XML layer is treated as a real attachment.
   it('appends original email and supported business attachments as base64 documents', () => {
     const service = new XmlService({} as any, {} as any) as unknown as XmlServiceInternals;
     const shipment = create({ version: '1.0', encoding: 'UTF-8' }).ele(
@@ -66,9 +68,9 @@ describe('XmlService original documents packaging', () => {
           contentBase64: 'cGRmLWNvbnRlbnQ=',
         },
         {
-          fileName: 'inline-logo.png',
-          mimeType: 'image/png',
-          contentBase64: 'cG5nLWNvbnRlbnQ=',
+          fileName: 'access-route.jpg',
+          mimeType: 'image/jpeg',
+          contentBase64: 'anBnLWNvbnRlbnQ=',
         },
         {
           fileName: 'rates.xlsx',
@@ -103,7 +105,11 @@ describe('XmlService original documents packaging', () => {
     );
     expect(xml).toContain('<contentbase64>eGxzeC1jb250ZW50</contentbase64>');
 
-    expect(xml).not.toContain('inline-logo.png');
+    // A real image attachment (e.g. an access route) is now packaged too.
+    expect(xml).toContain('<filename>access-route.jpg</filename>');
+    expect(xml).toContain('<mimetype>image/jpeg</mimetype>');
+
+    // No content -> not attached.
     expect(xml).not.toContain('empty.docx');
   });
 
@@ -118,9 +124,9 @@ describe('XmlService original documents packaging', () => {
       rawMimeBase64: null,
       attachments: [
         {
-          fileName: 'inline-logo.png',
-          mimeType: 'image/png',
-          contentBase64: 'cG5nLWNvbnRlbnQ=',
+          fileName: 'notes.txt',
+          mimeType: 'text/plain',
+          contentBase64: 'dHh0LWNvbnRlbnQ=',
         },
       ],
     });

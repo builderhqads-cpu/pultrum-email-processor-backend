@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { sanitizeExtractedValue } from '../../utils/sanitize';
+import {
+  formatNumber,
+  parseDecimal,
+  toCentimeters,
+} from '../../utils/field-normalize';
 
 export type RegexExtractedField = {
   key: string;
@@ -105,11 +110,8 @@ const normalizeCountryCode = (raw: string): string | null => {
 };
 
 const parseNumberString = (raw: string): string | null => {
-  const value = sanitizeExtractedValue(raw);
-  if (!value) return null;
-  const m = value.replace(',', '.').match(/[0-9]+(?:\.[0-9]+)?/);
-  if (!m) return null;
-  return m[0];
+  const n = parseDecimal(sanitizeExtractedValue(raw));
+  return n == null ? null : formatNumber(n);
 };
 
 const parseIntString = (raw: string): string | null => {
@@ -237,14 +239,16 @@ export class RegexExtractionService {
       emit('cargo_weight', weight ? parseNumberString(weight[1]) : null, 0.78);
     }
 
-    // Dimensions: "20 x 20 x 90 cm" or "20x20x90 cm"
+    // Dimensions: "20 x 20 x 90 cm" or "20x20x90 mm" — convert to cm using the
+    // shared unit (when present) so Transpas always receives centimeters.
     const dims = haystack.match(
-      /\b(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)(?:\s*cm|\s*mm|\s*m)?\b/i,
+      /\b(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)\s*(cm|mm|m)?\b/i,
     );
     if (dims) {
-      emit('length', parseNumberString(dims[1]), 0.8);
-      emit('width', parseNumberString(dims[2]), 0.8);
-      emit('height', parseNumberString(dims[3]), 0.8);
+      const unit = dims[4] ? ` ${dims[4]}` : '';
+      emit('length', toCentimeters(`${dims[1]}${unit}`), 0.8);
+      emit('width', toCentimeters(`${dims[2]}${unit}`), 0.8);
+      emit('height', toCentimeters(`${dims[3]}${unit}`), 0.8);
     }
 
     return out;

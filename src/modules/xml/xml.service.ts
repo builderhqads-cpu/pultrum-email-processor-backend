@@ -14,6 +14,12 @@ import {
   TRANSPORT_BOOKING_FIELD_RULES,
 } from '../required-fields/transport-booking-field-rules';
 import { sanitizeExtractedValue } from '../../utils/sanitize';
+import {
+  blankIfZero,
+  dropNameIfCity,
+  normalizeQuantity,
+  parseDecimal,
+} from '../../utils/field-normalize';
 
 @Injectable()
 export class XmlService {
@@ -29,22 +35,8 @@ export class XmlService {
     return `EDI-${ts}${rnd}`;
   }
 
-  private generateBarcode(seed: string) {
-    const short = (seed || '').split('-')[0] || 'NA';
-    const ts = Date.now().toString(36).toUpperCase();
-    return `BC-${short}-${ts}`;
-  }
-
   private parseNumber(value: string | null | undefined) {
-    if (!value) return null;
-    const normalized = value
-      .toString()
-      .trim()
-      .replace(',', '.')
-      .match(/[0-9]+(?:\.[0-9]+)?/);
-    if (!normalized) return null;
-    const num = Number.parseFloat(normalized[0]);
-    return Number.isFinite(num) ? num : null;
+    return parseDecimal(value);
   }
 
   private getFieldValue(map: Map<string, string>, key: string): string {
@@ -138,11 +130,20 @@ export class XmlService {
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
       mime ===
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+      // Real image attachments (e.g. an access-route / aanrijroute photo).
+      // Inline logo/signature images are already filtered out upstream.
+      mime === 'image/jpeg' ||
+      mime === 'image/png' ||
+      mime === 'image/webp' ||
       fileName.endsWith('.pdf') ||
       fileName.endsWith('.doc') ||
       fileName.endsWith('.docx') ||
       fileName.endsWith('.xls') ||
-      fileName.endsWith('.xlsx')
+      fileName.endsWith('.xlsx') ||
+      fileName.endsWith('.jpg') ||
+      fileName.endsWith('.jpeg') ||
+      fileName.endsWith('.png') ||
+      fileName.endsWith('.webp')
     );
   }
 
@@ -365,16 +366,9 @@ export class XmlService {
       fieldMap.set('shipment_edireference', shipmentEdiReference);
     }
 
-    let barcode = this.getFieldValue(fieldMap, 'barcode');
-    if (!barcode) {
-      barcode = this.generateBarcode(order.id);
-      await this.upsertOrderField({
-        orderId: order.id,
-        key: 'barcode',
-        value: barcode,
-      });
-      fieldMap.set('barcode', barcode);
-    }
+    // Barcode is never auto-generated: only an explicitly provided value is
+    // emitted, otherwise the element goes out blank.
+    const barcode = this.getFieldValue(fieldMap, 'barcode');
 
     // Calculated fields (persist when we can compute them).
     const unitAmount = this.getFieldValue(fieldMap, 'cargo_unit_amount');
@@ -411,14 +405,9 @@ export class XmlService {
           value: cargoLoadingMeter,
         });
         fieldMap.set('cargo_loading_meter', cargoLoadingMeter);
-      } else if (!cargoLoadingMeter) {
-        cargoLoadingMeter = '0';
-        await this.upsertOrderField({
-          orderId: order.id,
-          key: 'cargo_loading_meter',
-          value: cargoLoadingMeter,
-        });
-        fieldMap.set('cargo_loading_meter', cargoLoadingMeter);
+      } else {
+        // Not computable -> leave BLANK (never "0").
+        cargoLoadingMeter = '';
       }
     }
 
@@ -590,7 +579,15 @@ export class XmlService {
     pickup.ele('date').txt(this.getFieldValue(fieldMap, 'pickup_date')).up();
     pickup.ele('time').txt(this.getFieldValue(fieldMap, 'pickup_time')).up();
     pickup.ele('timetill').txt(pickupTimeTill).up();
-    pickup.ele('name').txt(this.getFieldValue(fieldMap, 'pickup_name')).up();
+    pickup
+      .ele('name')
+      .txt(
+        dropNameIfCity(
+          this.getFieldValue(fieldMap, 'pickup_name'),
+          this.getFieldValue(fieldMap, 'pickup_city'),
+        ),
+      )
+      .up();
     pickup
       .ele('address1')
       .txt(this.getFieldValue(fieldMap, 'pickup_address'))
@@ -624,7 +621,12 @@ export class XmlService {
     delivery.ele('timetill').txt(deliveryTimeTill).up();
     delivery
       .ele('name')
-      .txt(this.getFieldValue(fieldMap, 'delivery_name'))
+      .txt(
+        dropNameIfCity(
+          this.getFieldValue(fieldMap, 'delivery_name'),
+          this.getFieldValue(fieldMap, 'delivery_city'),
+        ),
+      )
       .up();
     delivery
       .ele('address1')
@@ -647,11 +649,11 @@ export class XmlService {
 
     // cargo
     const cargo = doc.ele('cargo');
-    cargo.ele('unitamount').txt(unitAmount).up();
+    cargo.ele('unitamount').txt(normalizeQuantity(unitAmount)).up();
     cargo.ele('unit_id').txt(unitId).up();
-    cargo.ele('weight').txt(weight).up();
-    cargo.ele('loadingmeter').txt(cargoLoadingMeter).up();
-    cargo.ele('volume').txt(cargoVolume).up();
+    cargo.ele('weight').txt(blankIfZero(weight)).up();
+    cargo.ele('loadingmeter').txt(blankIfZero(cargoLoadingMeter)).up();
+    cargo.ele('volume').txt(blankIfZero(cargoVolume)).up();
     cargo
       .ele('externalshipmentid')
       .txt(this.getFieldValue(fieldMap, 'external_shipment_id'))
@@ -660,15 +662,15 @@ export class XmlService {
     cargo.ele('cmrnumber').txt(this.getFieldValue(fieldMap, 'cmr_number')).up();
 
     const goodslines = cargo.ele('goodslines').ele('goodsline');
-    goodslines.ele('unitamount').txt(goodsUnitAmount).up();
+    goodslines.ele('unitamount').txt(normalizeQuantity(goodsUnitAmount)).up();
     goodslines.ele('unit_id', { matchmode: '1' }).txt(goodsUnitId).up();
     goodslines.ele('product_id', { matchmode: '1' }).txt(productId).up();
-    goodslines.ele('weight').txt(goodsWeight).up();
-    goodslines.ele('loadingmeter').txt(goodsLoadingMeter).up();
-    goodslines.ele('volume').txt(goodsVolume).up();
-    goodslines.ele('length').txt(length).up();
-    goodslines.ele('width').txt(width).up();
-    goodslines.ele('height').txt(height).up();
+    goodslines.ele('weight').txt(blankIfZero(goodsWeight)).up();
+    goodslines.ele('loadingmeter').txt(blankIfZero(goodsLoadingMeter)).up();
+    goodslines.ele('volume').txt(blankIfZero(goodsVolume)).up();
+    goodslines.ele('length').txt(blankIfZero(length)).up();
+    goodslines.ele('width').txt(blankIfZero(width)).up();
+    goodslines.ele('height').txt(blankIfZero(height)).up();
     goodslines.up().up().up(); // goodsline -> goodslines -> cargo
 
     this.appendOriginalDocuments(doc, order.emailMessage);
