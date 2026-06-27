@@ -20,6 +20,7 @@ import { CreativeGearsModule } from './modules/creative-gears/creative-gears.mod
 import { AuditLogModule } from './modules/audit-log/audit-log.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
+import { ClientProfileModule } from './modules/client-profiles/client-profile.module';
 import { ScheduleModule } from '@nestjs/schedule';
 
 @Module({
@@ -47,6 +48,7 @@ import { ScheduleModule } from '@nestjs/schedule';
     AuditLogModule,
     UsersModule,
     AuthModule,
+    ClientProfileModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -208,3 +208,73 @@ export function normalizeFieldMap(map: Map<string, string>): void {
     map.set(`${side}_city`, split.city);
   }
 }
+
+/** Light 24h normalization: "5pm"->"17:00", "9.00 uur"->"09:00", "17:00"->"17:00". */
+export function normalizeTime(raw: string | null | undefined): string {
+  const v = (raw ?? '').toString().trim().toLowerCase();
+  const m = v.match(/(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?/);
+  if (!m) return (raw ?? '').toString().trim();
+  let h = Number.parseInt(m[1], 10);
+  const min = m[2] ?? '00';
+  if (m[3] === 'pm' && h < 12) h += 12;
+  if (m[3] === 'am' && h === 12) h = 0;
+  if (!Number.isFinite(h) || h > 23) return (raw ?? '').toString().trim();
+  return `${String(h).padStart(2, '0')}:${min}`;
+}
+
+// A clock-time token: needs a colon/dot OR an explicit unit (avoids matching
+// bare numbers like "until 5 boxes").
+const TIME_RE =
+  '(\\d{1,2}[:.]\\d{2}(?:\\s*(?:uur|u|h))?|\\d{1,2}\\s*(?:am|pm|uur|h))';
+// Upper-bound words: the time is a deadline -> goes to *_time_till.
+const UNTIL_RE = '(?:tot|t/m|until|by|before|uiterlijk|latest|voor|v[oó]or|at[ée]|no m[aá]ximo)';
+// Lower-bound words: the time is a start -> goes to *_time.
+const FROM_RE = '(?:vanaf|from|a partir de|desde|after|ab)';
+const PICKUP_CTX = /(laad|laden|ophal|colet|collect|pick ?up|carrega)/i;
+const DELIVERY_CTX = /(los|lossen|lever|aflever|entreg|deliver|descarreg|unload)/i;
+
+/**
+ * Route a clock time to the correct side of the window using the source text.
+ * Clients often give only an upper bound ("deliver until 5pm" / "coletar até
+ * 9h"); that value must land in *_time_till, not *_time. If the AI already put
+ * it in the "from" (van) slot, it is moved. Pickup vs delivery is decided by
+ * context words near the time. Ambiguous matches are left untouched.
+ */
+export function routeTimeBounds(
+  fields: Record<string, unknown>,
+  text: string | null | undefined,
+): Record<string, unknown> {
+  const out = { ...fields };
+  const haystack = (text ?? '').toString();
+  if (!haystack.trim()) return out;
+
+  const apply = (kwRe: string, kind: 'till' | 'from') => {
+    const re = new RegExp(`${kwRe}\\s+${TIME_RE}`, 'gi');
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(haystack)) !== null) {
+      const time = normalizeTime(m[1]);
+      if (!/^\d{2}:\d{2}$/.test(time)) continue;
+      const window = haystack.slice(
+        Math.max(0, m.index - 60),
+        m.index + m[0].length + 20,
+      );
+      const isPickup = PICKUP_CTX.test(window);
+      const isDelivery = DELIVERY_CTX.test(window);
+      if (isPickup === isDelivery) continue; // ambiguous / both / neither
+      const side = isDelivery ? 'delivery' : 'pickup';
+      const vanKey = `${side}_time`;
+      const tillKey = `${side}_time_till`;
+      if (kind === 'till') {
+        out[tillKey] = time;
+        // The AI misplaced the deadline into the "from" slot -> clear it.
+        if (normalizeTime(String(out[vanKey] ?? '')) === time) out[vanKey] = '';
+      } else {
+        out[vanKey] = time;
+      }
+    }
+  };
+
+  apply(UNTIL_RE, 'till');
+  apply(FROM_RE, 'from');
+  return out;
+}

@@ -16,6 +16,9 @@ import { ThreadLinkingModule } from '../thread-linking/thread-linking.module';
 import { AiExtractionModule } from '../ai-extraction/ai-extraction.module';
 import { AiClassificationModule } from '../ai-classification/ai-classification.module';
 import { TransportBookingValidationModule } from '../transport-booking-validation/transport-booking-validation.module';
+import { ClientProfileModule } from '../client-profiles/client-profile.module';
+import { OrderSplitModule } from '../order-split/order-split.module';
+import { AiReplyModule } from '../ai-reply/ai-reply.module';
 import { FieldMergeService } from '../field-merge/field-merge.service';
 
 @Module({
@@ -32,6 +35,9 @@ import { FieldMergeService } from '../field-merge/field-merge.service';
     OrderClassifierModule,
     ThreadLinkingModule,
     TransportBookingValidationModule,
+    ClientProfileModule,
+    OrderSplitModule,
+    AiReplyModule,
   ],
   providers: [
     ProcessorsService,

@@ -25,7 +25,7 @@ describe('EmailsService', () => {
             lastSyncedAt: null,
           },
           attachments: [],
-          order: null,
+          orders: [],
           linkedOrder: {
             id: 'order-1',
             status: 'WAITING_CUSTOMER_RESPONSE',
@@ -73,7 +73,7 @@ describe('EmailsService', () => {
       emailMessage: {
         findUnique: jest.fn(async () => ({
           id: 'reply-1',
-          order: null,
+          orders: [],
         })),
         delete: emailDelete,
       },
@@ -113,9 +113,7 @@ describe('EmailsService', () => {
       emailMessage: {
         findUnique: jest.fn(async () => ({
           id: 'email-1',
-          order: {
-            id: 'order-1',
-          },
+          orders: [{ id: 'order-1' }],
         })),
       },
       $transaction: jest.fn(async (fn: any) =>
@@ -134,7 +132,7 @@ describe('EmailsService', () => {
     const result = await service.remove('email-1');
 
     expect(emailFindMany).toHaveBeenCalledWith({
-      where: { linkedOrderId: 'order-1' },
+      where: { linkedOrderId: { in: ['order-1'] }, id: { not: 'email-1' } },
       select: { id: true },
     });
     expect(emailDeleteMany).toHaveBeenCalledWith({

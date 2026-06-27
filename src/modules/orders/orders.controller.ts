@@ -55,11 +55,6 @@ export class OrdersController {
     return this.ordersService.sendAiRequest(id);
   }
 
-  @Post(':id/process-with-ai')
-  processWithAi(@Param('id') id: string) {
-    return this.ordersService.processWithAi(id);
-  }
-
   @Post(':id/generate-reply-draft')
   generateReplyDraft(@Param('id') id: string) {
     return this.ordersService.generateReplyDraft(id);

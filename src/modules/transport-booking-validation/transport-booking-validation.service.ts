@@ -1016,8 +1016,8 @@ export class TransportBookingValidationService {
     combinedText?: string,
     options?: { enqueueJobs?: boolean },
   ): Promise<TransportBookingValidationResult> {
-    const order = await this.prismaService.transportOrder.findUnique({
-      where: { emailMessageId: email.id },
+    const order = await this.prismaService.transportOrder.findFirst({
+      where: { emailMessageId: email.id, batchImportId: null },
       select: { id: true },
     });
     if (!order) {

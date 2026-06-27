@@ -3,12 +3,68 @@ import {
   dropNameIfCity,
   normalizeFieldMap,
   normalizeQuantity,
+  normalizeTime,
   parseDecimal,
+  routeTimeBounds,
   splitStreetAddress,
   toCentimeters,
 } from './field-normalize';
 
 describe('field-normalize', () => {
+  describe('normalizeTime', () => {
+    it('normalizes to 24h', () => {
+      expect(normalizeTime('5pm')).toBe('17:00');
+      expect(normalizeTime('9am')).toBe('09:00');
+      expect(normalizeTime('17:00')).toBe('17:00');
+      expect(normalizeTime('9.00 uur')).toBe('09:00');
+      expect(normalizeTime('12am')).toBe('00:00');
+    });
+  });
+
+  describe('routeTimeBounds', () => {
+    it('routes a delivery deadline into delivery_time_till', () => {
+      const out = routeTimeBounds(
+        {},
+        'Graag afleveren tot 17:00 in Best.',
+      );
+      expect(out.delivery_time_till).toBe('17:00');
+    });
+
+    it('moves a misplaced delivery deadline out of the "from" slot', () => {
+      const out = routeTimeBounds(
+        { delivery_time: '17:00' },
+        'Please deliver by 5pm at the latest.',
+      );
+      expect(out.delivery_time_till).toBe('17:00');
+      expect(out.delivery_time).toBe('');
+    });
+
+    it('routes a pickup deadline into pickup_time_till', () => {
+      const out = routeTimeBounds({}, 'Coletar até 9am no armazém.');
+      expect(out.pickup_time_till).toBe('09:00');
+    });
+
+    it('routes a lower bound into the "from" slot', () => {
+      const out = routeTimeBounds({}, 'Levering vanaf 08:00 mogelijk.');
+      expect(out.delivery_time).toBe('08:00');
+    });
+
+    it('leaves a plain "at X" time untouched (no bound keyword)', () => {
+      const out = routeTimeBounds(
+        { delivery_time: '07:00' },
+        'Om 7.00 uur lossen in Best.',
+      );
+      expect(out.delivery_time).toBe('07:00');
+      expect(out.delivery_time_till).toBeUndefined();
+    });
+
+    it('ignores ambiguous matches (no pickup/delivery context)', () => {
+      const out = routeTimeBounds({}, 'beschikbaar tot 18:00');
+      expect(out.delivery_time_till).toBeUndefined();
+      expect(out.pickup_time_till).toBeUndefined();
+    });
+  });
+
   describe('parseDecimal (German/EU notation)', () => {
     it('parses German notation (dot=thousands, comma=decimal)', () => {
       expect(parseDecimal('14.536,350')).toBeCloseTo(14536.35, 2);

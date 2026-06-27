@@ -69,14 +69,32 @@ export class AiClientService {
     return s || 'Aanvullende informatie nodig';
   }
 
+  /**
+   * A reply body must be human prose. The eml-process route returns the
+   * extraction in an `output` field (a JSON string) — if a reply route echoes
+   * that shape, we must NOT use it as the customer-facing e-mail body.
+   */
+  private isJsonLike(s: unknown): boolean {
+    if (typeof s !== 'string') return false;
+    const t = s.trim();
+    if (!t || (t[0] !== '{' && t[0] !== '[')) return false;
+    try {
+      return typeof JSON.parse(t) === 'object';
+    } catch {
+      return false;
+    }
+  }
+
   private extractSuggestedReply(responseBody: any): string | null {
     if (!responseBody || typeof responseBody !== 'object') return null;
 
     // Prefer explicit gateway fields used by our router.
     const replyBody = (responseBody as any).replyBody;
-    if (typeof replyBody === 'string' && replyBody.trim()) return replyBody.trim();
+    if (typeof replyBody === 'string' && replyBody.trim() && !this.isJsonLike(replyBody))
+      return replyBody.trim();
     const body = (responseBody as any).body;
-    if (typeof body === 'string' && body.trim()) return body.trim();
+    if (typeof body === 'string' && body.trim() && !this.isJsonLike(body))
+      return body.trim();
 
     const directCandidates = [
       responseBody.output,
@@ -85,7 +103,8 @@ export class AiClientService {
       responseBody.message,
     ];
     for (const c of directCandidates) {
-      if (typeof c === 'string' && c.trim()) return c.trim();
+      if (typeof c === 'string' && c.trim() && !this.isJsonLike(c))
+        return c.trim();
     }
 
     // OpenAI-style responses (chat completions / responses API wrappers)
@@ -339,9 +358,12 @@ export class AiClientService {
       const output = this.extractSuggestedReply(responseBody) ?? undefined;
       const suggestedSubject = this.extractSuggestedSubject(responseBody) ?? undefined;
 
+      // Never dump the raw API response (which may be the extraction JSON) into
+      // a customer-facing draft. If there is no usable prose reply, leave a
+      // short neutral note for the operator instead.
       const fallbackBody =
         (output ? normalizeEscapedNewlines(output) : '') ||
-        `AI response did not include an "output" field.\nStatus: ${res.status}\n\nResponse:\n${JSON.stringify(responseBody, null, 2)}`;
+        'Geen automatisch antwoord beschikbaar. Vul de ontbrekende gegevens handmatig aan voordat u verzendt.';
 
       const bodyWithToken = this.ensureTokenInBody(fallbackBody, replyToken);
       const draftSubject = this.ensureTokenInSubject(

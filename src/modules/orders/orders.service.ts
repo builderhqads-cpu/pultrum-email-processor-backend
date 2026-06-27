@@ -7,7 +7,18 @@ import {
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CustomerReplyDraftStatus, OrderStatus } from '@prisma/client';
+import {
+  CustomerReplyDraftStatus,
+  Department,
+  FieldRequirement,
+  OrderStatus,
+} from '@prisma/client';
+import { ClientProfileService } from '../client-profiles/client-profile.service';
+import {
+  getRuleRequirement,
+  TRANSPORT_BOOKING_FIELD_RULES,
+} from '../required-fields/transport-booking-field-rules';
+import { routeTimeBounds } from '../../utils/field-normalize';
 import {
   QUEUE_AI_REQUEST,
   QUEUE_EMAIL_PROCESSING,
@@ -37,6 +48,7 @@ export class OrdersService {
     private readonly transportBookingValidationService: TransportBookingValidationService,
     private readonly aiReplyService: AiReplyService,
     private readonly xmlService: XmlService,
+    private readonly clientProfileService: ClientProfileService,
     @InjectQueue(QUEUE_EMAIL_PROCESSING)
     private readonly emailProcessingQueue: Queue,
     @InjectQueue(QUEUE_XML_DELIVERY)
@@ -55,25 +67,6 @@ export class OrdersService {
         err?.message ?? 'Failed to generate XML preview',
       );
     }
-  }
-
-  private async applyAiMissingFieldReasons(
-    orderId: string,
-    missingFields: Array<{ key: string; label: string; reason: string }>,
-  ) {
-    if (!missingFields.length) return;
-
-    await this.prismaService.$transaction(async (tx) => {
-      for (const field of missingFields) {
-        await tx.missingField.updateMany({
-          where: { orderId, key: field.key },
-          data: {
-            label: field.label,
-            reason: field.reason,
-          },
-        });
-      }
-    });
   }
 
   private async buildAiExtractionSummary(order: {
@@ -197,6 +190,9 @@ export class OrdersService {
         customerEmail: true,
         overallConfidence: true,
         emailMessageId: true,
+        batchImportId: true,
+        batchSequence: true,
+        externalReference: true,
         createdAt: true,
         updatedAt: true,
         _count: {
@@ -274,11 +270,38 @@ export class OrdersService {
     };
   }
 
+  /**
+   * For a batch order there is ONE consolidated reply, held on the batch's
+   * primary order (lowest sequence). Any reply operation on a sibling order is
+   * routed to that anchor so the same reply is shown and sent from any order.
+   */
+  private async resolveBatchReplyOrderId(orderId: string): Promise<string> {
+    const order = await this.prismaService.transportOrder.findUnique({
+      where: { id: orderId },
+      select: { batchImportId: true },
+    });
+    if (!order?.batchImportId) return orderId;
+    const anchor = await this.prismaService.transportOrder.findFirst({
+      where: { batchImportId: order.batchImportId },
+      orderBy: { batchSequence: 'asc' },
+      select: { id: true },
+    });
+    return anchor?.id ?? orderId;
+  }
+
   async getReplyDraft(orderId: string) {
+    const targetId = await this.resolveBatchReplyOrderId(orderId);
     const existing = await this.prismaService.customerReplyDraft.findUnique({
-      where: { orderId },
+      where: { orderId: targetId },
     });
     if (existing) return existing;
+    if (targetId !== orderId) {
+      // Batch sibling: the consolidated reply lives on the anchor. If it isn't
+      // there, nothing is missing across the batch — no reply to show.
+      throw new NotFoundException(
+        `Reply draft not found for batch order=${orderId}`,
+      );
+    }
 
     // Backfill: if an AI request succeeded previously but draft wasn't created (legacy behavior),
     // build a draft from the latest successful AiRequest response.
@@ -363,8 +386,9 @@ export class OrdersService {
     orderId: string,
     input: { toEmail?: string; subject?: string; body?: string },
   ) {
+    const targetId = await this.resolveBatchReplyOrderId(orderId);
     const existing = await this.prismaService.customerReplyDraft.findUnique({
-      where: { orderId },
+      where: { orderId: targetId },
     });
     if (!existing)
       throw new NotFoundException(
@@ -372,7 +396,7 @@ export class OrdersService {
       );
 
     return this.prismaService.customerReplyDraft.update({
-      where: { orderId },
+      where: { orderId: targetId },
       data: {
         toEmail: input.toEmail ?? undefined,
         subject: input.subject ?? undefined,
@@ -383,6 +407,8 @@ export class OrdersService {
   }
 
   async sendReply(orderId: string) {
+    // Batch sibling -> send the ONE consolidated reply held on the anchor.
+    orderId = await this.resolveBatchReplyOrderId(orderId);
     const draft = await this.prismaService.customerReplyDraft.findUnique({
       where: { orderId },
     });
@@ -459,10 +485,21 @@ export class OrdersService {
     const order = await this.prismaService.transportOrder.findUnique({
       where: { id },
       include: {
-        emailMessage: { select: { id: true, graphMessageId: true } },
+        emailMessage: {
+          select: { id: true, graphMessageId: true, subject: true },
+        },
+        fields: { select: { key: true, value: true } },
       },
     });
     if (!order) throw new NotFoundException(`Order not found: id=${id}`);
+
+    // Snapshot the currently-filled fields so a reprocess can never lose data:
+    // it may only add/update values, never clear an already-populated field.
+    const existingFields: Record<string, string> = {};
+    for (const f of order.fields ?? []) {
+      const v = (f.value ?? '').toString().trim();
+      if (v) existingFields[f.key] = v;
+    }
 
     // Remove any idempotent jobs so the new validation can enqueue again.
     const aiJobId = `ai-request_${order.id}`;
@@ -479,6 +516,27 @@ export class OrdersService {
         .catch(() => undefined),
     ]);
 
+    // Batch order: reprocess ONLY this order from its stored rawOrderText,
+    // NON-destructively. We do NOT wipe the order's fields first — if the AI
+    // call fails, the existing data must stay intact. The single re-fill at the
+    // end is the only write, and it preserves everything already present.
+    if (order.batchImportId && order.rawOrderText) {
+      await this.refillBatchOrder(order, existingFields);
+      // Rebuild the ONE consolidated reply for the batch (also clears any stale
+      // per-order drafts on sibling orders).
+      await this.aiReplyService
+        .generateConsolidatedMissingInfoReply(order.batchImportId)
+        .catch(() => undefined);
+      await this.auditLogService.log({
+        entityType: 'TransportOrder',
+        entityId: order.id,
+        action: 'BATCH_ORDER_REPROCESSED',
+        detailsJson: { externalReference: order.externalReference },
+      });
+      return { enqueued: false, reprocessedOrder: true };
+    }
+
+    // Single order: wipe and re-run the whole email pipeline from scratch.
     const cleanup = await this.prismaService.$transaction(async (tx) => {
       const missingFields = await tx.missingField.deleteMany({
         where: { orderId: order.id },
@@ -531,6 +589,96 @@ export class OrdersService {
     return { enqueued: true, cleanup };
   }
 
+  /** Re-fill a single batch order from its stored rawOrderText (no siblings). */
+  private async refillBatchOrder(
+    order: {
+      id: string;
+      emailMessageId: string;
+      customerEmail: string;
+      department: Department;
+      rawOrderText: string | null;
+      emailMessage: { subject?: string | null } | null;
+    },
+    existingFields: Record<string, string>,
+  ): Promise<void> {
+    const text = order.rawOrderText ?? '';
+    const profile = this.clientProfileService.resolve({
+      fromEmail: order.customerEmail,
+      text,
+    });
+    const presetFields = profile
+      ? this.clientProfileService.derive(profile, text)
+      : {};
+
+    // Build the AI hints WITHOUT writing to the DB (so a failed AI call cannot
+    // gut the order). Known = what we already have + the profile preset.
+    const technical = new Set(
+      TRANSPORT_BOOKING_FIELD_RULES.filter(
+        (r) => r.generated || r.calculable,
+      ).map((r) => r.key),
+    );
+    const known: Record<string, string> = { ...existingFields, ...presetFields };
+    const detectedHints = Object.entries(known)
+      .filter(([key, value]) => value && !technical.has(key))
+      .map(([key, value]) => ({ key, label: key, value, confidence: 0.85 }));
+    const missingHints = TRANSPORT_BOOKING_FIELD_RULES.filter(
+      (r) => getRuleRequirement(r) === FieldRequirement.REQUIRED && !known[r.key],
+    ).map((r) => ({
+      key: r.key,
+      label: r.label,
+      requirement: FieldRequirement.REQUIRED,
+      reason: 'Not detected in order content',
+    }));
+
+    // AI fills the gaps. If this throws, NOTHING has been written yet, so the
+    // order keeps all of its current data.
+    const aiPayload = {
+      orderId: order.id,
+      customerEmail: order.customerEmail ?? null,
+      subject: order.emailMessage?.subject ?? null,
+      bodyText: null,
+      attachmentsText: null,
+      combinedText: text,
+      requiredFields: TRANSPORT_BOOKING_FIELD_RULES,
+      detectedFields: detectedHints,
+      missingFields: missingHints,
+      department: order.department ?? null,
+      language: null,
+      emailMetadata: {
+        fromEmail: order.customerEmail ?? null,
+        fromName: null,
+        receivedAt: null,
+      },
+      clientProfile: profile
+        ? this.clientProfileService.payloadSummary(profile)
+        : null,
+    };
+
+    const aiResult = await this.aiExtractionService.extract(aiPayload);
+
+    // Non-destructive merge: keep everything we already have; the AI only FILLS
+    // EMPTY fields (never overwrites). The client-profile preset is the only
+    // authoritative source. Single write -> a reprocess can add but never lose.
+    const merged: Record<string, unknown> = { ...existingFields };
+    for (const [k, v] of Object.entries(aiResult?.fields ?? {})) {
+      if (!merged[k] && v != null && v.toString().trim() !== '') merged[k] = v;
+    }
+    Object.assign(merged, presetFields);
+
+    await this.transportBookingValidationService.validateOrderFromFieldValues(
+      {
+        orderId: order.id,
+        emailMessageId: order.emailMessageId,
+        emailSubject: order.emailMessage?.subject ?? '',
+        fieldValues: routeTimeBounds(merged, text),
+        source: 'ai',
+      },
+      { enqueueJobs: false },
+    );
+
+    this.logger.log(`Reprocessed batch order ${order.id} from rawOrderText`);
+  }
+
   async sendXml(id: string) {
     const order = await this.prismaService.transportOrder.findUnique({
       where: { id },
@@ -571,110 +719,36 @@ export class OrdersService {
     return this.generateReplyDraft(id);
   }
 
-  async processWithAi(id: string) {
+  async generateReplyDraft(id: string) {
     const order = await this.prismaService.transportOrder.findUnique({
       where: { id },
-      select: { id: true, emailMessageId: true },
+      select: { id: true, batchImportId: true },
     });
     if (!order) throw new NotFoundException(`Order not found: id=${id}`);
 
-    this.logger.log(`AI extraction started orderId=${id}`);
-
-    const aiExtractionResult =
-      await this.aiExtractionService.extractTransportOrder(id);
-
-    this.logger.log(`AI extraction completed orderId=${id}`);
-
-    const afterAi = await this.prismaService.transportOrder.findUnique({
-      where: { id },
-      include: {
-        emailMessage: { select: { subject: true } },
-        fields: true,
-        missingFields: true,
-        validationWarnings: true,
-      },
-    });
-    if (!afterAi)
-      throw new NotFoundException(`Order not found after AI: id=${id}`);
-
-    const fieldValues: Record<string, unknown> = {};
-    for (const f of afterAi.fields ?? []) {
-      const v = (f.value ?? '').toString().trim();
-      if (!v) continue;
-      fieldValues[f.key] = v;
-    }
-
-    const validation =
-      await this.transportBookingValidationService.validateOrderFromFieldValues(
-        {
-          orderId: afterAi.id,
-          emailMessageId: order.emailMessageId,
-          emailSubject: afterAi.emailMessage?.subject ?? '',
-          fieldValues,
-          source: 'ai',
-        },
-        {
-          enqueueJobs: false,
-          incompleteStatus: OrderStatus.MISSING_INFORMATION,
-        },
-      );
-
-    if (aiExtractionResult.missingFields?.length) {
-      await this.applyAiMissingFieldReasons(
-        id,
-        aiExtractionResult.missingFields,
+    // Batch order: there is ONE consolidated reply for the whole batch, never a
+    // per-order one. Rebuild that instead so we don't create a stray draft.
+    if (order.batchImportId) {
+      return this.aiReplyService.generateConsolidatedMissingInfoReply(
+        order.batchImportId,
       );
     }
-
-    const detectedFields = (afterAi.fields ?? []).filter(
-      (f) => (f.value ?? '').toString().trim().length > 0,
-    );
-
-    const updated = await this.prismaService.transportOrder.findUnique({
-      where: { id },
-      include: {
-        emailMessage: true,
-        fields: true,
-        missingFields: true,
-        validationWarnings: true,
-        aiRequests: true,
-        xmlDeliveries: true,
-        replyDraft: true,
-      },
-    });
-
-    const finalMissingFields =
-      updated?.missingFields ?? validation.missingFields;
-
-    this.logger.log(
-      `AI process-with-ai result orderId=${id} detected=${detectedFields.length} missing=${finalMissingFields.length}`,
-    );
-
-    return {
-      order: updated,
-      detectedFields,
-      missingFields: finalMissingFields,
-    };
-  }
-
-  async generateReplyDraft(id: string) {
-    const exists = await this.prismaService.transportOrder.findUnique({
-      where: { id },
-      select: { id: true },
-    });
-    if (!exists) throw new NotFoundException(`Order not found: id=${id}`);
-
-    const res = await this.aiReplyService.generateMissingInfoReply(id);
-    return res;
+    return this.aiReplyService.generateMissingInfoReply(id);
   }
 
   async generateAiReply(id: string) {
-    const exists = await this.prismaService.transportOrder.findUnique({
+    const order = await this.prismaService.transportOrder.findUnique({
       where: { id },
-      select: { id: true },
+      select: { id: true, batchImportId: true },
     });
-    if (!exists) throw new NotFoundException(`Order not found: id=${id}`);
+    if (!order) throw new NotFoundException(`Order not found: id=${id}`);
 
+    if (order.batchImportId) {
+      const res = await this.aiReplyService.generateConsolidatedMissingInfoReply(
+        order.batchImportId,
+      );
+      return res?.draft ?? null;
+    }
     const res = await this.aiReplyService.generateMissingInfoReply(id);
     return res.draft;
   }

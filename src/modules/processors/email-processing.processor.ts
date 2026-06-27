@@ -1,8 +1,10 @@
 import { Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import {
   AttachmentExtractionStatus,
+  BatchImportStatus,
   Department,
   EmailLinkMethod,
   EmailStatus,
@@ -23,7 +25,12 @@ import { AiExtractionService } from '../ai-extraction/ai-extraction.service';
 import { AiClassificationService } from '../ai-classification/ai-classification.service';
 import { TRANSPORT_BOOKING_FIELD_RULES } from '../required-fields/transport-booking-field-rules';
 import { TransportBookingValidationService } from '../transport-booking-validation/transport-booking-validation.service';
+import { ClientProfileService } from '../client-profiles/client-profile.service';
+import { OrderSplitService } from '../order-split/order-split.service';
+import { AiReplyService } from '../ai-reply/ai-reply.service';
+import type { SplitResult } from '../order-split/order-split.types';
 import { sanitizeExtractedValue } from '../../utils/sanitize';
+import { routeTimeBounds } from '../../utils/field-normalize';
 import {
   FieldMergeService,
   type MergeableField,
@@ -51,8 +58,727 @@ export class EmailProcessingProcessor extends WorkerHost {
     private readonly transportBookingValidationService: TransportBookingValidationService,
     private readonly fieldMergeService: FieldMergeService,
     private readonly aiClassificationService: AiClassificationService,
+    private readonly clientProfileService: ClientProfileService,
+    private readonly orderSplitService: OrderSplitService,
+    private readonly aiReplyService: AiReplyService,
+    private readonly configService: ConfigService,
   ) {
     super();
+  }
+
+  /**
+   * Run the SAME fill-in processing a single order gets, for one order's text:
+   * deterministic preset fields first, then the configured AI extraction route
+   * to fill the gaps, then merge (client-profile preset stays authoritative)
+   * and validate. Used by the batch path so each split order is fully processed.
+   */
+  private async fillOrder(params: {
+    orderId: string;
+    emailMessageId: string;
+    emailSubject: string;
+    text: string;
+    presetFields: Record<string, string>;
+    department: Department | null;
+    customerEmail: string | null;
+    fromEmail: string | null;
+    fromName: string | null;
+    receivedAt: Date | null;
+    bodyText: string | null;
+    language: string | null;
+    enqueueJobs: boolean;
+  }): Promise<void> {
+    // 1) Deterministic: apply the profile-derived preset fields.
+    const det =
+      await this.transportBookingValidationService.validateOrderFromFieldValues(
+        {
+          orderId: params.orderId,
+          emailMessageId: params.emailMessageId,
+          emailSubject: params.emailSubject,
+          fieldValues: params.presetFields,
+          source: 'email',
+        },
+        { enqueueJobs: false },
+      );
+
+    const metrics = this.buildAiDecisionMetrics({
+      requiredMissingCount: det.missingFields.length,
+      recommendedMissingCount: det.validationWarnings?.length ?? 0,
+      detectedFieldCount: det.detectedFields.filter(
+        (f) => f?.key && !this.aiExcludeKeys.has(f.key),
+      ).length,
+      overallConfidence: det.overallConfidence,
+    });
+
+    // 2) Deterministic already sufficient -> done (no AI call).
+    if (!this.shouldUseAiExtraction(metrics)) {
+      if (params.enqueueJobs) {
+        await this.transportBookingValidationService.enqueueJobsForOrder({
+          orderId: params.orderId,
+          emailMessageId: params.emailMessageId,
+        });
+      }
+      return;
+    }
+
+    // 3) Fill the gaps via the configured AI extraction route.
+    const profile = this.clientProfileService.resolve({
+      fromEmail: params.fromEmail,
+      bodyText: params.bodyText,
+      text: params.text,
+    });
+    const aiPayload = {
+      orderId: params.orderId,
+      customerEmail: params.customerEmail,
+      subject: params.emailSubject || null,
+      bodyText: params.bodyText,
+      attachmentsText: null,
+      combinedText: params.text,
+      requiredFields: TRANSPORT_BOOKING_FIELD_RULES,
+      detectedFields: det.detectedFields.filter(
+        (f) => f?.key && !this.aiExcludeKeys.has(f.key),
+      ),
+      missingFields: det.missingFields,
+      department: params.department,
+      language: params.language || this.detectLanguage(params.text),
+      emailMetadata: {
+        fromEmail: params.fromEmail,
+        fromName: params.fromName,
+        receivedAt: params.receivedAt,
+      },
+      clientProfile: profile
+        ? this.clientProfileService.payloadSummary(profile)
+        : null,
+    };
+
+    const aiResult = await this.aiExtractionService.extract(aiPayload);
+    await this.recordAiExtractionRequest({
+      orderId: params.orderId,
+      payload: aiPayload,
+      aiResult,
+    });
+
+    if (aiResult?.fields) {
+      // AI fills gaps; client-profile preset fields stay authoritative.
+      const merged = { ...aiResult.fields, ...params.presetFields } as Record<
+        string,
+        unknown
+      >;
+      for (const d of det.detectedFields) {
+        if (!d?.key || merged[d.key] != null || !d.value) continue;
+        merged[d.key] = d.value;
+      }
+      // Route "deliver/load until X" times to the *_time_till slot.
+      const routed = routeTimeBounds(merged, params.text);
+      await this.transportBookingValidationService.validateOrderFromFieldValues(
+        {
+          orderId: params.orderId,
+          emailMessageId: params.emailMessageId,
+          emailSubject: params.emailSubject,
+          fieldValues: routed,
+          source: 'ai',
+        },
+        { enqueueJobs: params.enqueueJobs },
+      );
+    } else if (params.enqueueJobs) {
+      await this.transportBookingValidationService.enqueueJobsForOrder({
+        orderId: params.orderId,
+        emailMessageId: params.emailMessageId,
+      });
+    }
+  }
+
+  /** Whether batch orders should auto-enqueue XML/reply jobs (off by default). */
+  private batchEnqueueJobsEnabled(): boolean {
+    const raw = (
+      this.configService.get<string>('BATCH_ENQUEUE_JOBS_ENABLED') ?? ''
+    ).trim();
+    return ['1', 'true', 'yes', 'y', 'on'].includes(raw.toLowerCase());
+  }
+
+  /** New flow: the AI works from the .eml and returns the orders; we only store. */
+  private aiEmailAnalysisEnabled(): boolean {
+    const raw = (
+      this.configService.get<string>('AI_EMAIL_ANALYSIS_ENABLED') ?? ''
+    ).trim();
+    return ['1', 'true', 'yes', 'y', 'on'].includes(raw.toLowerCase());
+  }
+
+  /**
+   * NEW FLOW. Send the raw .eml to the AI, then store whatever it returns:
+   * the classification + the order(s) (1 or many). No extraction/split on our
+   * side. If the AI is unavailable we throw (email goes FAILED, never lost).
+   */
+  private async processViaAiAnalysis(email: {
+    id: string;
+    fromEmail: string;
+    fromName: string | null;
+    subject: string;
+    mailbox: { department: Department };
+  }): Promise<void> {
+    const eml = (email as any).rawMimeBase64 ?? null;
+    const analysis = await this.aiExtractionService.analyzeEmail(eml);
+    if (!analysis) {
+      throw new Error(`AI analysis returned null for emailMessageId=${email.id}`);
+    }
+    // Preview of what we POST to /eml-process (the full base64 would bloat the
+    // DB; the field name + size + a head sample are enough for debugging).
+    const emlPreview = eml
+      ? `${String(eml).slice(0, 120)}…(${String(eml).length} bytes)`
+      : null;
+
+    await this.prismaService.emailMessage.update({
+      where: { id: email.id },
+      data: {
+        isTransportOrder: analysis.isTransportOrder,
+        classificationReason: analysis.reason,
+        classificationLanguage: analysis.language,
+        classifiedAt: new Date(),
+      },
+    });
+    await this.auditLogService.log({
+      entityType: 'EmailMessage',
+      entityId: email.id,
+      action: 'AI_CLASSIFICATION_COMPLETED',
+      detailsJson: {
+        isTransportOrder: analysis.isTransportOrder,
+        confidence: analysis.confidence,
+        reason: analysis.reason,
+        language: analysis.language,
+        orderCount: analysis.orders.length,
+      },
+    });
+
+    if (!analysis.isTransportOrder || analysis.orders.length === 0) {
+      await this.auditLogService.log({
+        entityType: 'EmailMessage',
+        entityId: email.id,
+        action: analysis.isTransportOrder
+          ? 'EMAIL_NO_ORDERS'
+          : 'EMAIL_IGNORED_NOT_TRANSPORT',
+        detailsJson: { reason: analysis.reason },
+      });
+      await this.prismaService.emailMessage.update({
+        where: { id: email.id },
+        data: { status: EmailStatus.PROCESSED },
+      });
+      this.logger.log(
+        `Email ${email.id}: not a transport order / no orders (AI)`,
+      );
+      return;
+    }
+
+    const isBatch = analysis.orders.length > 1;
+    const batch = isBatch
+      ? await this.prismaService.batchImport.create({
+          data: {
+            emailMessageId: email.id,
+            status: BatchImportStatus.PROCESSING,
+            totalDetected: analysis.orders.length,
+            confidence: analysis.confidence,
+            reason: analysis.reason,
+          },
+        })
+      : null;
+    if (batch) {
+      await this.auditLogService.log({
+        entityType: 'BatchImport',
+        entityId: batch.id,
+        action: 'BATCH_IMPORT_CREATED',
+        detailsJson: { source: 'ai', totalDetected: analysis.orders.length },
+      });
+    }
+
+    // Single orders enqueue their own job (reply or XML). Batch orders do NOT
+    // enqueue per-order reply jobs here — that would send one e-mail PER order.
+    // Instead, after all orders exist, we send ONE consolidated reply for the
+    // whole batch (below) and enqueue XML only for the orders that are complete.
+    const enqueueJobs = isBatch ? false : true;
+    let created = 0;
+    let failed = 0;
+    let seq = 0;
+
+    for (const o of analysis.orders) {
+      seq++;
+      try {
+        const extRef = o.externalReference || null;
+        // Idempotency: by external reference, or (single) the primary order.
+        const existing = extRef
+          ? await this.prismaService.transportOrder.findFirst({
+              where: { emailMessageId: email.id, externalReference: extRef },
+              select: { id: true },
+            })
+          : isBatch
+            ? null
+            : await this.prismaService.transportOrder.findFirst({
+                where: { emailMessageId: email.id, batchImportId: null },
+                select: { id: true },
+              });
+
+        let orderId: string;
+        if (existing) {
+          orderId = existing.id;
+        } else {
+          const order = await this.prismaService.transportOrder.create({
+            data: {
+              emailMessageId: email.id,
+              batchImportId: batch?.id ?? null,
+              batchSequence: isBatch ? seq : null,
+              externalReference: extRef,
+              department: email.mailbox.department,
+              type: OrderType.NEW_ORDER,
+              status: OrderStatus.PROCESSING,
+              customerEmail: email.fromEmail,
+              customerName: email.fromName || null,
+            },
+          });
+          orderId = order.id;
+        }
+
+        await this.transportBookingValidationService.validateOrderFromFieldValues(
+          {
+            orderId,
+            emailMessageId: email.id,
+            emailSubject: email.subject ?? '',
+            fieldValues: o.fields,
+            source: 'ai',
+          },
+          { enqueueJobs },
+        );
+
+        // Record the /eml-process call on this order so the panel ("Advanced ->
+        // AI requests") shows what we sent and what the AI returned.
+        await this.prismaService.aiRequest
+          .create({
+            data: {
+              orderId,
+              payloadJson: {
+                route: 'eml-process',
+                request: {
+                  emlBase64: emlPreview,
+                  emailSubject: email.subject,
+                  emailMessageId: email.id,
+                },
+              } as any,
+              responseJson: (analysis.rawResponse ?? analysis) as any,
+              status: 'SUCCEEDED',
+            },
+          })
+          .catch(() => undefined);
+        created++;
+      } catch (err: any) {
+        failed++;
+        this.logger.warn(`AI order failed seq=${seq}: ${err?.message ?? err}`);
+      }
+    }
+
+    if (batch) {
+      await this.prismaService.batchImport.update({
+        where: { id: batch.id },
+        data: {
+          status:
+            failed === 0
+              ? BatchImportStatus.COMPLETED
+              : created > 0
+                ? BatchImportStatus.PARTIAL_FAILED
+                : BatchImportStatus.FAILED,
+          totalCreated: created,
+          totalFailed: failed,
+        },
+      });
+
+      // ONE consolidated reply for the whole batch (all missing fields, grouped
+      // by order) instead of one e-mail per order. Always produce the draft so
+      // the operator can review/send it. XML for the orders that ARE complete is
+      // only auto-enqueued when the batch-jobs flag is on.
+      await this.aiReplyService
+        .generateConsolidatedMissingInfoReply(batch.id)
+        .catch((err: any) =>
+          this.logger.warn(
+            `Consolidated reply draft failed batchId=${batch.id}: ${err?.message ?? err}`,
+          ),
+        );
+
+      if (this.batchEnqueueJobsEnabled()) {
+        const batchOrders = await this.prismaService.transportOrder.findMany({
+          where: { batchImportId: batch.id },
+          select: { id: true, status: true },
+        });
+        for (const bo of batchOrders) {
+          if (bo.status === OrderStatus.READY_TO_XML) {
+            await this.transportBookingValidationService
+              .enqueueJobsForOrder({ orderId: bo.id, emailMessageId: email.id })
+              .catch((err: any) =>
+                this.logger.warn(
+                  `Batch XML enqueue failed orderId=${bo.id}: ${err?.message ?? err}`,
+                ),
+              );
+          }
+        }
+      }
+    }
+
+    await this.prismaService.emailMessage.update({
+      where: { id: email.id },
+      data: { status: EmailStatus.PROCESSED },
+    });
+    await this.auditLogService.log({
+      entityType: 'EmailMessage',
+      entityId: email.id,
+      action: 'EMAIL_PROCESSED_VIA_AI',
+      detailsJson: {
+        orders: analysis.orders.length,
+        created,
+        failed,
+        batch: isBatch,
+      },
+    });
+    this.logger.log(
+      `Email ${email.id} processed via AI: ${created} order(s), ${failed} failed`,
+    );
+  }
+
+  /**
+   * NEW FLOW — customer reply. Send the reply's .eml to the AI and merge what it
+   * returns into the existing order, NON-DESTRUCTIVELY (the reply can fill the
+   * missing info but never clears data already present).
+   */
+  private async processReplyViaAiAnalysis(params: {
+    replyEmailMessage: any;
+    existingOrder: any;
+    linkMatchType: EmailLinkMethod;
+  }): Promise<void> {
+    const { replyEmailMessage, existingOrder, linkMatchType } = params;
+    const analysis = await this.aiExtractionService.analyzeEmail(
+      replyEmailMessage.rawMimeBase64 ?? null,
+    );
+    if (!analysis) {
+      throw new Error(
+        `AI analysis returned null for reply emailMessageId=${replyEmailMessage.id}`,
+      );
+    }
+
+    // Link the reply to the existing order.
+    await this.prismaService.emailMessage.update({
+      where: { id: replyEmailMessage.id },
+      data: { linkedOrderId: existingOrder.id, linkedByMethod: linkMatchType },
+    });
+    await this.prismaService.transportOrder.update({
+      where: { id: existingOrder.id },
+      data: { lastCustomerReplyAt: new Date() },
+    });
+    await this.auditLogService.log({
+      entityType: 'TransportOrder',
+      entityId: existingOrder.id,
+      action: 'CUSTOMER_REPLY_LINKED',
+      detailsJson: {
+        replyEmailMessageId: replyEmailMessage.id,
+        method: linkMatchType,
+      },
+    });
+
+    // Distribute the reply across the order(s). A consolidated batch reply can
+    // return several orders (one per reference) — each is merged into the order
+    // it belongs to, matched by externalReference. The merge is NON-DESTRUCTIVE:
+    // existing values are kept; the reply only fills gaps.
+    const isBatchReply = Boolean(existingOrder.batchImportId);
+    const targets: any[] = isBatchReply
+      ? await this.prismaService.transportOrder.findMany({
+          where: { batchImportId: existingOrder.batchImportId },
+          include: { fields: true, emailMessage: true },
+        })
+      : [existingOrder];
+
+    const byRef = new Map<string, any>();
+    for (const t of targets) {
+      const ref = (t.externalReference ?? '').toString().trim();
+      if (ref) byRef.set(ref, t);
+    }
+    const resolveTarget = (extRef: string | null | undefined) => {
+      const ref = (extRef ?? '').toString().trim();
+      if (ref && byRef.has(ref)) return byRef.get(ref);
+      if (targets.length === 1) return targets[0];
+      return existingOrder; // anchor fallback for an unreferenced answer
+    };
+    const seedFromExisting = (order: any): Record<string, unknown> => {
+      const m: Record<string, unknown> = {};
+      for (const f of order.fields ?? []) {
+        const v = (f.value ?? '').toString().trim();
+        if (v) m[f.key] = v;
+      }
+      return m;
+    };
+
+    const pending = new Map<
+      string,
+      { order: any; fields: Record<string, unknown> }
+    >();
+    const returned = analysis.orders.length ? analysis.orders : [{ fields: {} }];
+    for (const ao of returned) {
+      const target = resolveTarget((ao as any).externalReference);
+      let entry = pending.get(target.id);
+      if (!entry) {
+        entry = { order: target, fields: seedFromExisting(target) };
+        pending.set(target.id, entry);
+      }
+      for (const [k, v] of Object.entries((ao as any).fields ?? {})) {
+        if (!entry.fields[k] && v != null && v.toString().trim() !== '') {
+          entry.fields[k] = v;
+        }
+      }
+    }
+
+    // For a batch reply we don't enqueue per-order jobs (that would re-send one
+    // e-mail per still-incomplete order); we re-run the consolidated step below.
+    for (const { order, fields } of pending.values()) {
+      await this.transportBookingValidationService.validateOrderFromFieldValues(
+        {
+          orderId: order.id,
+          emailMessageId: order.emailMessageId,
+          emailSubject:
+            order.emailMessage?.subject ??
+            existingOrder.emailMessage?.subject ??
+            '',
+          fieldValues: fields,
+          source: 'ai',
+        },
+        { enqueueJobs: !isBatchReply },
+      );
+    }
+
+    if (isBatchReply) {
+      // Follow-up: one consolidated reply for whatever is STILL missing, plus
+      // XML for the orders that are now complete (gated by the batch flag).
+      await this.aiReplyService
+        .generateConsolidatedMissingInfoReply(existingOrder.batchImportId)
+        .catch((err: any) =>
+          this.logger.warn(
+            `Consolidated follow-up reply failed batchId=${existingOrder.batchImportId}: ${err?.message ?? err}`,
+          ),
+        );
+      if (this.batchEnqueueJobsEnabled()) {
+        const batchOrders = await this.prismaService.transportOrder.findMany({
+          where: { batchImportId: existingOrder.batchImportId },
+          select: { id: true, status: true, emailMessageId: true },
+        });
+        for (const bo of batchOrders) {
+          if (bo.status === OrderStatus.READY_TO_XML) {
+            await this.transportBookingValidationService
+              .enqueueJobsForOrder({
+                orderId: bo.id,
+                emailMessageId: bo.emailMessageId,
+              })
+              .catch(() => undefined);
+          }
+        }
+      }
+    }
+
+    // Record the /eml-process call (reply) on the order for the panel.
+    const replyEml = replyEmailMessage.rawMimeBase64 ?? null;
+    await this.prismaService.aiRequest
+      .create({
+        data: {
+          orderId: existingOrder.id,
+          payloadJson: {
+            route: 'eml-process',
+            context: 'customer-reply',
+            request: {
+              emlBase64: replyEml
+                ? `${String(replyEml).slice(0, 120)}…(${String(replyEml).length} bytes)`
+                : null,
+              replyEmailMessageId: replyEmailMessage.id,
+            },
+          } as any,
+          responseJson: (analysis.rawResponse ?? analysis) as any,
+          status: 'SUCCEEDED',
+        },
+      })
+      .catch(() => undefined);
+
+    await this.prismaService.emailMessage.update({
+      where: { id: replyEmailMessage.id },
+      data: { status: EmailStatus.PROCESSED },
+    });
+    this.logger.log(
+      `Reply ${replyEmailMessage.id} processed via AI -> order ${existingOrder.id}`,
+    );
+  }
+
+  /**
+   * Apply the client-profile deterministic fields (merged over the deterministic
+   * detection) when the AI path is not taken. Returns false if there is nothing
+   * to apply, so the caller can fall back to plain job enqueuing.
+   */
+  private async applyProfileFields(params: {
+    orderId: string;
+    emailMessageId: string;
+    emailSubject: string;
+    detectedFields: Array<{ key?: string; value?: string | null }>;
+    profileFields: Record<string, string>;
+    combinedText: string;
+  }): Promise<boolean> {
+    if (Object.keys(params.profileFields).length === 0) return false;
+    const fieldValues: Record<string, unknown> = {};
+    for (const d of params.detectedFields) {
+      if (d?.key && d.value) fieldValues[d.key] = d.value;
+    }
+    // Profile fields are authoritative.
+    Object.assign(fieldValues, params.profileFields);
+    await this.transportBookingValidationService.validateOrderFromFieldValues(
+      {
+        orderId: params.orderId,
+        emailMessageId: params.emailMessageId,
+        emailSubject: params.emailSubject,
+        fieldValues: routeTimeBounds(fieldValues, params.combinedText),
+        source: 'email',
+      },
+      { enqueueJobs: true },
+    );
+    return true;
+  }
+
+  /**
+   * Turn a detected batch into N TransportOrders under a BatchImport. Each order
+   * carries its own rawOrderText + the deterministic profile-derived fields.
+   * Idempotent on (emailMessageId, externalReference) so reprocessing is safe.
+   * Jobs are NOT enqueued here — operators review the batch in the panel.
+   */
+  private async handleBatch(
+    email: {
+      id: string;
+      fromEmail: string;
+      fromName: string | null;
+      subject: string;
+      bodyText: string | null;
+      receivedAt: Date | null;
+      classificationLanguage: string | null;
+      mailbox: { department: Department };
+    },
+    classification: { type: OrderType; originalOrderReference?: string | null },
+    split: SplitResult,
+  ): Promise<void> {
+    const enqueueJobs = this.batchEnqueueJobsEnabled();
+    const profile = this.clientProfileService.resolve({
+      fromEmail: email.fromEmail,
+      bodyText: email.bodyText,
+      text: split.orders.map((o) => o.rawText).join('\n'),
+    });
+    const customerName = profile?.name ?? email.fromName ?? null;
+
+    const batch = await this.prismaService.batchImport.create({
+      data: {
+        emailMessageId: email.id,
+        status: BatchImportStatus.PROCESSING,
+        totalDetected: split.orders.length,
+        reason: split.reason,
+      },
+    });
+
+    await this.auditLogService.log({
+      entityType: 'BatchImport',
+      entityId: batch.id,
+      action: 'BATCH_IMPORT_CREATED',
+      detailsJson: { source: split.source, totalDetected: split.orders.length },
+    });
+
+    let created = 0;
+    let failed = 0;
+
+    for (const chunk of split.orders) {
+      try {
+        // Idempotency: don't duplicate an order already imported for this email.
+        const existing = chunk.externalReference
+          ? await this.prismaService.transportOrder.findFirst({
+              where: {
+                emailMessageId: email.id,
+                externalReference: chunk.externalReference,
+              },
+              select: { id: true },
+            })
+          : null;
+        if (existing) {
+          created++;
+          continue;
+        }
+
+        const order = await this.prismaService.transportOrder.create({
+          data: {
+            emailMessageId: email.id,
+            batchImportId: batch.id,
+            batchSequence: chunk.sequence,
+            externalReference: chunk.externalReference,
+            rawOrderText: chunk.rawText,
+            department: email.mailbox.department,
+            type: classification.type,
+            status: OrderStatus.PROCESSING,
+            customerEmail: email.fromEmail,
+            customerName,
+            originalOrderReference:
+              classification.originalOrderReference ?? null,
+          },
+        });
+
+        // Process the order through the SAME fill-in pipeline as a single
+        // order: deterministic preset (profile) + AI route to fill the gaps.
+        await this.fillOrder({
+          orderId: order.id,
+          emailMessageId: email.id,
+          emailSubject: email.subject,
+          text: chunk.rawText,
+          presetFields: chunk.derivedFields,
+          department: email.mailbox.department,
+          customerEmail: email.fromEmail,
+          fromEmail: email.fromEmail,
+          fromName: email.fromName,
+          receivedAt: email.receivedAt,
+          bodyText: email.bodyText,
+          language: email.classificationLanguage,
+          enqueueJobs,
+        });
+        created++;
+      } catch (err: any) {
+        failed++;
+        this.logger.warn(
+          `Batch order failed seq=${chunk.sequence}: ${err?.message ?? err}`,
+        );
+      }
+    }
+
+    await this.prismaService.batchImport.update({
+      where: { id: batch.id },
+      data: {
+        status:
+          failed === 0
+            ? BatchImportStatus.COMPLETED
+            : created > 0
+              ? BatchImportStatus.PARTIAL_FAILED
+              : BatchImportStatus.FAILED,
+        totalCreated: created,
+        totalFailed: failed,
+      },
+    });
+
+    await this.prismaService.emailMessage.update({
+      where: { id: email.id },
+      data: { status: EmailStatus.PROCESSED },
+    });
+
+    await this.auditLogService.log({
+      entityType: 'EmailMessage',
+      entityId: email.id,
+      action: 'BATCH_IMPORT_COMPLETED',
+      detailsJson: {
+        batchId: batch.id,
+        source: split.source,
+        totalDetected: split.orders.length,
+        created,
+        failed,
+      },
+    });
+
+    this.logger.log(
+      `Batch import ${batch.id}: ${created} created, ${failed} failed (source=${split.source})`,
+    );
   }
 
   private parseProviderMessageId(graphMessageId: string) {
@@ -122,6 +848,11 @@ export class EmailProcessingProcessor extends WorkerHost {
   }
 
   private async extractAttachmentTextIfNeeded(emailMessage: any) {
+    // New flow: the AI parses the .eml (incl. attachments) on its side, so our
+    // OCR/text extraction is redundant. We still download/store the attachment
+    // bytes for the panel — only the costly text extraction is skipped here.
+    if (this.aiEmailAnalysisEnabled()) return;
+
     const attachments = (emailMessage?.attachments ?? []) as Array<{
       id: string;
       extractedText?: string | null;
@@ -690,13 +1421,31 @@ export class EmailProcessingProcessor extends WorkerHost {
           });
 
         if (existingOrder) {
-          await this.processCustomerReply({
-            replyEmailMessage: emailForValidation,
-            existingOrder,
-            linkMatchType: linkMatch.type,
-          });
+          // Customer reply: new flow sends the reply's .eml to the AI and
+          // merges what it returns into the existing order (non-destructive).
+          if (this.aiEmailAnalysisEnabled()) {
+            await this.processReplyViaAiAnalysis({
+              replyEmailMessage: emailForValidation,
+              existingOrder,
+              linkMatchType: linkMatch.type,
+            });
+          } else {
+            await this.processCustomerReply({
+              replyEmailMessage: emailForValidation,
+              existingOrder,
+              linkMatchType: linkMatch.type,
+            });
+          }
           return;
         }
+      }
+
+      // NEW FLOW: the AI classifies/extracts from the raw .eml and returns the
+      // order(s). We only store. The legacy pipeline below stays for the future,
+      // behind the flag.
+      if (this.aiEmailAnalysisEnabled()) {
+        await this.processViaAiAnalysis(emailForValidation);
+        return;
       }
 
       const attachmentsText = (emailForValidation.attachments || [])
@@ -784,27 +1533,60 @@ export class EmailProcessingProcessor extends WorkerHost {
         attachmentsText,
       );
 
-      order = await this.prismaService.transportOrder.upsert({
-        where: { emailMessageId: emailForValidation.id },
-        create: {
-          emailMessageId: emailForValidation.id,
-          department: emailForValidation.mailbox.department,
-          type: classification.type,
-          status: OrderStatus.PROCESSING,
-          customerEmail: emailForValidation.fromEmail,
-          customerName: emailForValidation.fromName || null,
-          originalOrderReference: classification.originalOrderReference ?? null,
-        },
-        update: {
-          department: emailForValidation.mailbox.department,
-          customerEmail: emailForValidation.fromEmail,
-          customerName: emailForValidation.fromName || null,
-          status: OrderStatus.PROCESSING,
-          type: classification.type,
-          originalOrderReference:
-            classification.originalOrderReference ?? undefined,
-        },
+      // Batch detection: a single email/attachment can hold many orders
+      // (e.g. a weekly Dispo). Rules-first per client, then our own AI fallback.
+      const splitText = [
+        emailForValidation.subject,
+        emailForValidation.bodyText,
+        attachmentsText,
+      ]
+        .filter(Boolean)
+        .join('\n');
+      const split = await this.orderSplitService.split({
+        fromEmail: emailForValidation.fromEmail,
+        bodyText: emailForValidation.bodyText,
+        combinedText: splitText,
       });
+      if (split.isBatch) {
+        await this.handleBatch(emailForValidation, classification, split);
+        return;
+      }
+
+      // emailMessageId is no longer unique (one email can yield several batch
+      // orders), so find-or-create the single primary order (batchImportId null)
+      // instead of upserting on emailMessageId.
+      const existingPrimaryOrder =
+        await this.prismaService.transportOrder.findFirst({
+          where: {
+            emailMessageId: emailForValidation.id,
+            batchImportId: null,
+          },
+        });
+      order = existingPrimaryOrder
+        ? await this.prismaService.transportOrder.update({
+            where: { id: existingPrimaryOrder.id },
+            data: {
+              department: emailForValidation.mailbox.department,
+              customerEmail: emailForValidation.fromEmail,
+              customerName: emailForValidation.fromName || null,
+              status: OrderStatus.PROCESSING,
+              type: classification.type,
+              originalOrderReference:
+                classification.originalOrderReference ?? undefined,
+            },
+          })
+        : await this.prismaService.transportOrder.create({
+            data: {
+              emailMessageId: emailForValidation.id,
+              department: emailForValidation.mailbox.department,
+              type: classification.type,
+              status: OrderStatus.PROCESSING,
+              customerEmail: emailForValidation.fromEmail,
+              customerName: emailForValidation.fromName || null,
+              originalOrderReference:
+                classification.originalOrderReference ?? null,
+            },
+          });
 
       if (classification.type === OrderType.MODIFICATION) {
         await this.prismaService.transportOrder.update({
@@ -863,6 +1645,17 @@ export class EmailProcessingProcessor extends WorkerHost {
           { enqueueJobs: false },
         );
 
+      // Per-client knowledge base: resolve (sender, forwarded sender, or content
+      // markers) and derive this client's deterministic fields for the order.
+      const clientProfile = this.clientProfileService.resolve({
+        fromEmail: emailForValidation.fromEmail,
+        bodyText: emailForValidation.bodyText,
+        text: combinedText,
+      });
+      const profileFields = clientProfile
+        ? this.clientProfileService.derive(clientProfile, combinedText)
+        : {};
+
       const aiDecisionMetrics = this.buildAiDecisionMetrics({
         requiredMissingCount: deterministic.missingFields.length,
         recommendedMissingCount:
@@ -910,6 +1703,13 @@ export class EmailProcessingProcessor extends WorkerHost {
             fromName: emailForValidation.fromName ?? null,
             receivedAt: emailForValidation.receivedAt ?? null,
           },
+          // Raw original email (.eml). The new flow sends only this to the AI.
+          email: (emailForValidation as any).rawMimeBase64 ?? null,
+          // Per-client knowledge base (resolved above). Null for unmapped
+          // clients. Lets the AI route honor fixed data / patterns / value maps.
+          clientProfile: clientProfile
+            ? this.clientProfileService.payloadSummary(clientProfile)
+            : null,
         };
         const aiResult = await this.aiExtractionService.extract(aiPayload);
         await this.recordAiExtractionRequest({
@@ -929,13 +1729,18 @@ export class EmailProcessingProcessor extends WorkerHost {
             if (!d.value) continue;
             mergedFields[d.key] = d.value;
           }
+          // Client-profile deterministic fields are authoritative over the AI.
+          Object.assign(mergedFields, profileFields);
+
+          // Route "deliver/load until X" times to the *_time_till slot.
+          const routedFields = routeTimeBounds(mergedFields, combinedText);
 
           await this.transportBookingValidationService.validateOrderFromFieldValues(
             {
               orderId: order.id,
               emailMessageId: emailForValidation.id,
               emailSubject: emailForValidation.subject ?? '',
-              fieldValues: mergedFields,
+              fieldValues: routedFields,
               source: 'ai',
             },
             { enqueueJobs: true },
@@ -953,10 +1758,20 @@ export class EmailProcessingProcessor extends WorkerHost {
             },
           });
 
-          await this.transportBookingValidationService.enqueueJobsForOrder({
+          const applied = await this.applyProfileFields({
             orderId: order.id,
             emailMessageId: emailForValidation.id,
+            emailSubject: emailForValidation.subject ?? '',
+            detectedFields: deterministic.detectedFields,
+            profileFields,
+            combinedText,
           });
+          if (!applied) {
+            await this.transportBookingValidationService.enqueueJobsForOrder({
+              orderId: order.id,
+              emailMessageId: emailForValidation.id,
+            });
+          }
         }
       } else {
         await this.auditLogService.log({
@@ -971,10 +1786,20 @@ export class EmailProcessingProcessor extends WorkerHost {
           },
         });
 
-        await this.transportBookingValidationService.enqueueJobsForOrder({
+        const applied = await this.applyProfileFields({
           orderId: order.id,
           emailMessageId: emailForValidation.id,
+          emailSubject: emailForValidation.subject ?? '',
+          detectedFields: deterministic.detectedFields,
+          profileFields,
+          combinedText,
         });
+        if (!applied) {
+          await this.transportBookingValidationService.enqueueJobsForOrder({
+            orderId: order.id,
+            emailMessageId: emailForValidation.id,
+          });
+        }
       }
 
       await this.prismaService.emailMessage.update({

@@ -129,7 +129,10 @@ model EmailMessage {
 
   mailbox     Mailbox         @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
   attachments Attachment[]
-  order       TransportOrder?
+  // One email can now produce several orders (batch split). `orders[0]` is the
+  // primary order for the legacy single-order flow.
+  orders      TransportOrder[]
+  batchImports BatchImport[]
   linkedOrder TransportOrder? @relation("LinkedOrder", fields: [linkedOrderId], references: [id], onDelete: SetNull)
 
   @@index([mailboxId, receivedAt])
@@ -169,7 +172,8 @@ enum AttachmentExtractionStatus {
 
 model TransportOrder {
   id                     String      @id @default(uuid()) @db.Uuid
-  emailMessageId         String      @unique @db.Uuid
+  // No longer @unique: one email can now yield several orders (batch split).
+  emailMessageId         String      @db.Uuid
   department             Department
   type                   OrderType   @default(UNKNOWN)
   status                 OrderStatus @default(EMAIL_RECEIVED)
@@ -181,11 +185,18 @@ model TransportOrder {
   conversationKey        String?
   lastCustomerReplyAt    DateTime?
   overallConfidence      Float?
+  // Batch / split metadata (null for normal single-order emails).
+  batchImportId          String?     @db.Uuid
+  batchSequence          Int?
+  externalReference      String?
+  sourceAttachmentId     String?     @db.Uuid
+  rawOrderText           String?
   createdAt              DateTime    @default(now())
   updatedAt              DateTime    @updatedAt
 
   emailMessage  EmailMessage        @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
   linkedEmails  EmailMessage[]      @relation("LinkedOrder")
+  batchImport   BatchImport?        @relation(fields: [batchImportId], references: [id], onDelete: SetNull)
   fields        OrderField[]
   missingFields MissingField[]
   validationWarnings ValidationWarning[]
@@ -193,12 +204,43 @@ model TransportOrder {
   xmlDeliveries XmlDelivery[]
   replyDraft    CustomerReplyDraft? @relation("OrderReplyDraft")
 
+  @@index([emailMessageId])
+  @@index([batchImportId])
+  @@index([externalReference])
   @@index([department])
   @@index([status])
   @@index([type])
   @@index([renovoToken])
   @@index([replyToken])
   @@index([conversationKey])
+}
+
+model BatchImport {
+  id                 String            @id @default(uuid()) @db.Uuid
+  emailMessageId     String            @db.Uuid
+  sourceAttachmentId String?           @db.Uuid
+  status             BatchImportStatus @default(DETECTED)
+  totalDetected      Int               @default(0)
+  totalCreated       Int               @default(0)
+  totalFailed        Int               @default(0)
+  confidence         Float?
+  reason             String?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  emailMessage EmailMessage     @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
+  orders       TransportOrder[]
+
+  @@index([emailMessageId])
+  @@index([status])
+}
+
+enum BatchImportStatus {
+  DETECTED
+  PROCESSING
+  COMPLETED
+  PARTIAL_FAILED
+  FAILED
 }
 
 model User {

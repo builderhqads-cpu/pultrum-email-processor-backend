@@ -40,6 +40,25 @@ export type AiExtractionPayload = {
   department: string | null;
   language: string | null;
   emailMetadata?: Record<string, any>;
+  /** Raw original email (.eml, base64) — the ONLY content sent in the new flow. */
+  email?: string | null;
+};
+
+/** One order returned by the AI in the new "send-the-eml" flow. */
+export type AiOrderResult = {
+  externalReference?: string | null;
+  fields: Record<string, string>;
+};
+
+/** The AI's analysis of a whole email (classification + the orders it found). */
+export type AiEmailAnalysis = {
+  isTransportOrder: boolean;
+  confidence: number;
+  reason: string;
+  language: string | null;
+  orders: AiOrderResult[];
+  /** The full raw response from the route (for the AI requests panel). */
+  rawResponse?: any;
 };
 
 export type AiExtractionResult = {
@@ -156,6 +175,22 @@ export class AiExtractionService {
     const rawPath =
       (this.configService.get<string>('AI_EXTRACTION_API_URL') || '').trim() ||
       '/extract-transport-order';
+
+    const normalizeBase = (b: string) => b.replace(/\/+$/, '');
+    const normalizePath = (p: string) => (p.startsWith('/') ? p : `/${p}`);
+    return `${normalizeBase(rawBase)}${normalizePath(rawPath)}`;
+  }
+
+  /** URL for the new "send-the-eml" route (default /eml-process). */
+  private resolveEmlProcessUrl() {
+    const rawBase = (
+      this.configService.get<string>('AI_API_BASE_URL') || ''
+    ).trim();
+    if (!rawBase) return '';
+
+    const rawPath =
+      (this.configService.get<string>('AI_EML_PROCESS_API_URL') || '').trim() ||
+      '/eml-process';
 
     const normalizeBase = (b: string) => b.replace(/\/+$/, '');
     const normalizePath = (p: string) => (p.startsWith('/') ? p : `/${p}`);
@@ -556,6 +591,8 @@ export class AiExtractionService {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
+      // Legacy path (preserved): the rich extraction payload. The new flow uses
+      // analyzeEmail() with the raw .eml instead.
       const safePayload = {
         ...payload,
         customerEmail:
@@ -640,6 +677,103 @@ export class AiExtractionService {
       );
       return null;
     }
+  }
+
+  /**
+   * New flow: send ONLY the raw email (.eml) and let the AI classify + extract.
+   * Returns the classification plus the orders it found (1 or many), or null on
+   * failure (caller decides how to handle — must NOT lose the email).
+   */
+  async analyzeEmail(eml: string | null | undefined): Promise<AiEmailAnalysis | null> {
+    const url = this.resolveEmlProcessUrl();
+    if (!url) {
+      this.logger.warn('AI_API_BASE_URL not configured; skipping AI analysis');
+      return null;
+    }
+    if (!eml) {
+      this.logger.warn('No raw email (.eml) available; skipping AI analysis');
+      return null;
+    }
+    try {
+      new URL(url);
+    } catch {
+      this.logger.warn(`AI API URL is invalid; skipping AI analysis. Got: ${url}`);
+      return null;
+    }
+
+    const apiKey = this.getApiKey();
+    const timeoutMs = Number(
+      this.configService.get<string>('AI_EXTRACTION_TIMEOUT_MS') || '120000',
+    );
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+        },
+        body: JSON.stringify({ emlBase64: eml }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      const text = await res.text().catch(() => '');
+      if (!res.ok) {
+        this.logger.warn(
+          `AI analysis API error: status=${res.status} url=${url} body=${(text || '').slice(0, 1000)}`,
+        );
+        return null;
+      }
+      let raw: any = null;
+      try {
+        raw = JSON.parse(text);
+      } catch {
+        this.logger.warn(
+          `AI analysis returned non-JSON: ${(text || '').slice(0, 500)}`,
+        );
+        return null;
+      }
+      return this.parseEmailAnalysis(raw);
+    } catch (err: any) {
+      clearTimeout(timeout);
+      this.logger.warn(`AI analysis request failed: ${err?.message ?? err}`);
+      return null;
+    }
+  }
+
+  private parseEmailAnalysis(raw: any): AiEmailAnalysis | null {
+    if (!raw || typeof raw !== 'object') return null;
+    const ordersRaw = Array.isArray(raw.orders) ? raw.orders : [];
+    const orders: AiOrderResult[] = ordersRaw
+      .filter(
+        (o: any) => o && typeof o === 'object' && o.fields && typeof o.fields === 'object',
+      )
+      .map((o: any) => ({
+        externalReference:
+          o.externalReference != null ? String(o.externalReference).trim() : null,
+        fields: this.normalizeAiFields(o.fields),
+      }));
+    return {
+      isTransportOrder: Boolean(raw.isTransportOrder),
+      confidence: Number(raw.confidence) || 0,
+      reason: typeof raw.reason === 'string' ? raw.reason : '',
+      language: typeof raw.language === 'string' ? raw.language : null,
+      orders,
+      rawResponse: raw,
+    };
+  }
+
+  private normalizeAiFields(
+    fields: Record<string, unknown>,
+  ): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(fields)) {
+      if (v == null) continue;
+      const s = sanitizeExtractedValue(String(v)).trim();
+      if (s) out[k] = s;
+    }
+    return out;
   }
 
   async extractTransportOrder(orderId: string) {

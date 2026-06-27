@@ -99,10 +99,10 @@ export class ThreadLinkingService {
         where: { id: { not: emailMessageId }, conversationId },
         orderBy: { receivedAt: 'desc' },
         take: 10,
-        select: { order: { select: { id: true } }, linkedOrderId: true },
+        select: { orders: { select: { id: true }, take: 1 }, linkedOrderId: true },
       });
       for (const c of candidates) {
-        const orderId = c.order?.id ?? c.linkedOrderId ?? null;
+        const orderId = c.orders?.[0]?.id ??c.linkedOrderId ?? null;
         if (orderId) return { type: EmailLinkMethod.REFERENCES, orderId };
       }
     }
@@ -112,10 +112,10 @@ export class ThreadLinkingService {
     if (inReplyToIds.length) {
       const referenced = await this.prismaService.emailMessage.findFirst({
         where: { id: { not: emailMessageId }, messageIdHeader: { in: inReplyToIds } },
-        select: { order: { select: { id: true } }, linkedOrderId: true },
+        select: { orders: { select: { id: true }, take: 1 }, linkedOrderId: true },
       });
 
-      const orderId = referenced?.order?.id ?? referenced?.linkedOrderId ?? null;
+      const orderId = referenced?.orders?.[0]?.id ??referenced?.linkedOrderId ?? null;
       if (orderId) return { type: EmailLinkMethod.IN_REPLY_TO, orderId };
     }
 
@@ -124,10 +124,10 @@ export class ThreadLinkingService {
     if (refIds.length) {
       const referenced = await this.prismaService.emailMessage.findFirst({
         where: { id: { not: emailMessageId }, messageIdHeader: { in: refIds } },
-        select: { order: { select: { id: true } }, linkedOrderId: true },
+        select: { orders: { select: { id: true }, take: 1 }, linkedOrderId: true },
       });
 
-      const orderId = referenced?.order?.id ?? referenced?.linkedOrderId ?? null;
+      const orderId = referenced?.orders?.[0]?.id ??referenced?.linkedOrderId ?? null;
       if (orderId) return { type: EmailLinkMethod.REFERENCES, orderId };
     }
 
@@ -136,10 +136,10 @@ export class ThreadLinkingService {
     if (incomingMessageId) {
       const referenced = await this.prismaService.emailMessage.findFirst({
         where: { id: { not: emailMessageId }, messageIdHeader: incomingMessageId },
-        select: { order: { select: { id: true } }, linkedOrderId: true },
+        select: { orders: { select: { id: true }, take: 1 }, linkedOrderId: true },
       });
 
-      const orderId = referenced?.order?.id ?? referenced?.linkedOrderId ?? null;
+      const orderId = referenced?.orders?.[0]?.id ??referenced?.linkedOrderId ?? null;
       if (orderId) return { type: EmailLinkMethod.INTERNET_MESSAGE_ID, orderId };
     }
 

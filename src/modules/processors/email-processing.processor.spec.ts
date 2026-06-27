@@ -66,6 +66,12 @@ describe('EmailProcessingProcessor (reply linking)', () => {
       transportBookingValidationService,
       new FieldMergeService(),
       { classify: jest.fn(async () => null) } as any,
+      { resolve: jest.fn(async () => null) } as any,
+      { split: jest.fn(async () => null) } as any,
+      {
+        generateConsolidatedMissingInfoReply: jest.fn(async () => null),
+      } as any,
+      { get: jest.fn(() => undefined) } as any,
     );
 
     const existingOrder: any = {

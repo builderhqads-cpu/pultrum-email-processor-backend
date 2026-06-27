@@ -102,7 +102,8 @@ export class EmailsService {
       include: {
         mailbox: true,
         attachments: true,
-        order: true,
+        orders: { orderBy: { batchSequence: 'asc' } },
+        batchImports: { orderBy: { createdAt: 'desc' }, take: 1 },
         linkedOrder: true,
       },
     });
@@ -111,7 +112,9 @@ export class EmailsService {
       throw new NotFoundException(`Email not found: id=${id}`);
     }
 
-    const order = email.order ?? email.linkedOrder;
+    // Legacy single-order shape: the first order is the primary one.
+    const order = email.orders?.[0] ?? email.linkedOrder;
+    const batchImport = email.batchImports?.[0] ?? null;
 
     return {
       id: email.id,
@@ -143,6 +146,23 @@ export class EmailsService {
             updatedAt: order.updatedAt,
           }
         : null,
+      // Batch: when one email produced several orders.
+      batch: batchImport
+        ? {
+            id: batchImport.id,
+            status: batchImport.status,
+            totalDetected: batchImport.totalDetected,
+            totalCreated: batchImport.totalCreated,
+            totalFailed: batchImport.totalFailed,
+            reason: batchImport.reason,
+          }
+        : null,
+      orders: email.orders.map((o) => ({
+        id: o.id,
+        status: o.status,
+        externalReference: o.externalReference,
+        batchSequence: o.batchSequence,
+      })),
     };
   }
 
@@ -150,7 +170,7 @@ export class EmailsService {
     const email = await this.prismaService.emailMessage.findUnique({
       where: { id },
       include: {
-        order: {
+        orders: {
           select: {
             id: true,
           },
@@ -162,9 +182,11 @@ export class EmailsService {
       throw new NotFoundException(`Email not found: id=${id}`);
     }
 
+    const orderIds = email.orders.map((order) => order.id);
+
     const deletedReplyEmailsCount = await this.prismaService.$transaction(
       async (tx) => {
-        if (!email.order) {
+        if (orderIds.length === 0) {
           await tx.emailMessage.delete({
             where: { id },
           });
@@ -172,8 +194,11 @@ export class EmailsService {
           return 0;
         }
 
+        // Replies are linked to any of this email's orders. Exclude the email
+        // itself: if its own linkedOrderId points at one of its orders, it must
+        // not be deleted here (the explicit delete below handles it + cascade).
         const linkedReplies = await tx.emailMessage.findMany({
-          where: { linkedOrderId: email.order.id },
+          where: { linkedOrderId: { in: orderIds }, id: { not: id } },
           select: { id: true },
         });
 
@@ -187,6 +212,7 @@ export class EmailsService {
           });
         }
 
+        // Cascade removes the email's own orders.
         await tx.emailMessage.delete({
           where: { id },
         });
@@ -198,7 +224,7 @@ export class EmailsService {
     return {
       ok: true,
       deletedEmailId: id,
-      deletedOrderId: email.order?.id ?? null,
+      deletedOrderId: orderIds[0] ?? null,
       deletedReplyEmailsCount,
     };
   }
