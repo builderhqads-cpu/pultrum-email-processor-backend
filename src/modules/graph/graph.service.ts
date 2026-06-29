@@ -45,7 +45,7 @@ export class GraphService {
 
     const listResponse = await client
       .api(`/users/${mailbox}/messages/${msg}/attachments`)
-      .select('id,name,contentType,size,isInline')
+      .select('id,name,contentType,size,isInline,contentId')
       .get();
 
     const items = (listResponse?.value ?? []) as Array<any>;
@@ -66,12 +66,14 @@ export class GraphService {
       const name = (att?.name ?? '').toString() || `attachment-${id}`;
       const contentType = (att?.contentType ?? '').toString() || undefined;
 
-      // Skip inline images (signature logos, social icons embedded in the body
-      // via content-id). They are part of the message, not real attachments.
-      if (
-        att?.isInline === true &&
-        (contentType || '').toLowerCase().startsWith('image/')
-      ) {
+      // Skip inline body images (signature logos, social icons embedded in the
+      // body). They are part of the message, not real attachments. Graph's
+      // isInline flag is NOT reliable for server-stamped signatures (Exclaimer),
+      // so we ALSO treat any image carrying a Content-ID as inline — a real
+      // attached image (photo/scan) has no content-id.
+      const isImage = (contentType || '').toLowerCase().startsWith('image/');
+      const hasContentId = Boolean((att?.contentId ?? '').toString().trim());
+      if (isImage && (att?.isInline === true || hasContentId)) {
         continue;
       }
 

@@ -275,15 +275,34 @@ export class ImapMailProvider implements MailProvider {
           return v.toString().trim() || undefined;
         };
 
-        const attachments: NormalizedAttachment[] = (
-          parsed.attachments || []
-        ).map((a, idx) => ({
-          providerAttachmentId: a.partId || String(idx),
-          fileName: a.filename || `attachment-${idx + 1}`,
-          mimeType: a.contentType,
-          size: a.size,
-          contentBase64: a.content ? a.content.toString('base64') : undefined,
-        }));
+        // Skip inline body images (signature logos, social icons embedded via
+        // content-id / multipart-related). They are part of the message body,
+        // not real attachments. Only true attachments (PDF, images, XLS, ...)
+        // are kept. Mirrors the Graph provider's isInline filtering.
+        const isInlineBodyImage = (a: any): boolean => {
+          const ct = (a?.contentType || '').toString().toLowerCase();
+          if (!ct.startsWith('image/')) return false;
+          const disposition = (a?.contentDisposition || '')
+            .toString()
+            .toLowerCase();
+          // A body-embedded image is referenced via content-id (cid:) and/or
+          // marked related/inline. A real attached image has none of these.
+          return (
+            a?.related === true ||
+            disposition === 'inline' ||
+            Boolean(a?.cid || a?.contentId)
+          );
+        };
+
+        const attachments: NormalizedAttachment[] = (parsed.attachments || [])
+          .filter((a) => !isInlineBodyImage(a))
+          .map((a, idx) => ({
+            providerAttachmentId: a.partId || String(idx),
+            fileName: a.filename || `attachment-${idx + 1}`,
+            mimeType: a.contentType,
+            size: a.size,
+            contentBase64: a.content ? a.content.toString('base64') : undefined,
+          }));
 
         emails.push({
           provider: 'imap',
