@@ -45,7 +45,11 @@ export class GraphService {
 
     const listResponse = await client
       .api(`/users/${mailbox}/messages/${msg}/attachments`)
-      .select('id,name,contentType,size,isInline,contentId')
+      // NOTE: do NOT select 'contentId' here — like 'contentBytes', it only
+      // exists on the derived type microsoft.graph.fileAttachment, so selecting
+      // it on the base attachment collection fails with a 400 and we'd download
+      // NO attachments. We read contentId from the per-attachment detail GET.
+      .select('id,name,contentType,size,isInline')
       .get();
 
     const items = (listResponse?.value ?? []) as Array<any>;
@@ -66,14 +70,11 @@ export class GraphService {
       const name = (att?.name ?? '').toString() || `attachment-${id}`;
       const contentType = (att?.contentType ?? '').toString() || undefined;
 
-      // Skip inline body images (signature logos, social icons embedded in the
-      // body). They are part of the message, not real attachments. Graph's
-      // isInline flag is NOT reliable for server-stamped signatures (Exclaimer),
-      // so we ALSO treat any image carrying a Content-ID as inline — a real
-      // attached image (photo/scan) has no content-id.
       const isImage = (contentType || '').toLowerCase().startsWith('image/');
-      const hasContentId = Boolean((att?.contentId ?? '').toString().trim());
-      if (isImage && (att?.isInline === true || hasContentId)) {
+
+      // Fast path: an image explicitly marked inline is a body image (signature
+      // logo, social icon) — skip without downloading anything.
+      if (isImage && att?.isInline === true) {
         continue;
       }
 
@@ -82,6 +83,7 @@ export class GraphService {
           ? att.size
           : Number(att?.size ?? 0) || undefined;
       let contentBase64: string | undefined;
+      let contentId: string | undefined;
 
       if (size && size > 0 && size <= maxBase64Bytes) {
         try {
@@ -89,13 +91,14 @@ export class GraphService {
           // derived type microsoft.graph.fileAttachment, so selecting it on the
           // base attachment type fails ("Could not find a property named
           // 'contentBytes'"). A plain GET returns the full fileAttachment with
-          // contentBytes included.
+          // contentBytes (and contentId) included.
           const details = await client
             .api(
               `/users/${mailbox}/messages/${msg}/attachments/${encodeURIComponent(id)}`,
             )
             .get();
 
+          contentId = (details?.contentId ?? '').toString().trim() || undefined;
           const bytes = details?.contentBytes;
           if (typeof bytes === 'string' && bytes.trim()) {
             contentBase64 = bytes.trim();
@@ -122,6 +125,14 @@ export class GraphService {
         this.logger.warn(
           `Graph attachment skipped (too large) messageId=${messageId} attachmentId=${id} name=${name} size=${size}`,
         );
+      }
+
+      // Graph's isInline is unreliable for server-stamped signatures (Exclaimer
+      // arrives with isInline=false). A body-embedded image ALWAYS carries a
+      // Content-ID (referenced via cid: in the HTML); a real attached image
+      // (photo/scan) does not. Drop the former, keep the latter.
+      if (isImage && contentId) {
+        continue;
       }
 
       results.push({
