@@ -396,7 +396,10 @@ export class AiReplyService {
     const aiText = await this.tryConsolidatedAiReply(ordersPayload, {
       language,
       subject: email?.subject ?? null,
+      bodyText: email?.bodyText ?? null,
       token,
+      anchorOrderId: anchor.id,
+      customerEmail: toEmail,
     }).catch((err: any) => {
       this.logger.warn(
         `Consolidated AI reply failed batchId=${batchImportId}: ${err?.message ?? err}`,
@@ -473,10 +476,12 @@ export class AiReplyService {
   }
 
   /**
-   * Call the (configurable) AI route that returns a consolidated reply for the
-   * whole batch. Returns null when no route is configured so the caller falls
-   * back to the template. The route/contract is confirmed with Matheus — set
-   * AI_CONSOLIDATED_REPLY_API_URL to point at it (defaults to AI_REPLY_API_URL).
+   * Ask the AI (Matheus' /generate-missing-info-reply) for ONE consolidated
+   * reply covering the whole batch. That route is strictly single-order, so we
+   * flatten every incomplete order into one payload: each missing/detected field
+   * is prefixed with its order reference (e.g. "26TR001374 — Aantal colli") so
+   * the model groups them by order in the reply. Returns null on any problem so
+   * the caller falls back to the deterministic template.
    */
   private async tryConsolidatedAiReply(
     orders: Array<{
@@ -489,17 +494,51 @@ export class AiReplyService {
         reason: string | null;
       }>;
     }>,
-    ctx: { language: string; subject: string | null; token: string | null },
+    ctx: {
+      language: string;
+      subject: string | null;
+      bodyText: string | null;
+      token: string | null;
+      anchorOrderId: string;
+      customerEmail: string;
+    },
   ): Promise<{ subject?: string; body?: string } | null> {
-    const base = (this.configService.get<string>('AI_API_BASE_URL') || '').trim();
-    const path = (
-      this.configService.get<string>('AI_CONSOLIDATED_REPLY_API_URL') ||
-      this.configService.get<string>('AI_REPLY_API_URL') ||
-      ''
-    ).trim();
-    if (!base || !path) return null;
-    const url = `${base.replace(/\/+$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
+    const url = this.resolveAiReplyUrl();
+    if (!url) return null;
     const apiKey = this.getApiKey();
+
+    // Flatten across orders, tagging every field with its order reference so the
+    // single-order route still produces a per-order grouped reply.
+    const tag = (ref: string, label: string) => `${ref} — ${label}`;
+    const missingFields = orders.flatMap((o) =>
+      o.missingFields.map((m) => ({
+        key: `${o.reference}:${m.key}`,
+        label: tag(o.reference, m.label),
+        reason: m.reason ?? null,
+      })),
+    );
+    const detectedFields = orders.flatMap((o) =>
+      o.detectedFields.map((f) => ({
+        key: `${o.reference}:${f.key}`,
+        label: tag(o.reference, f.label),
+        value: f.value == null ? null : String(f.value),
+        confidence: null,
+        source: null,
+      })),
+    );
+
+    const payload = {
+      orderId: ctx.anchorOrderId,
+      department: null,
+      customerEmail: ctx.customerEmail || null,
+      subject: ctx.subject,
+      bodyText: ctx.bodyText,
+      detectedFields,
+      missingFields,
+      validationWarnings: [],
+      language: ctx.language,
+      replyToken: ctx.token,
+    };
 
     const timeoutMs = Number(
       this.configService.get<string>('AI_REPLY_TIMEOUT_MS') || '120000',
@@ -513,13 +552,7 @@ export class AiReplyService {
           'Content-Type': 'application/json',
           ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
         },
-        body: JSON.stringify({
-          consolidated: true,
-          language: ctx.language,
-          subject: ctx.subject,
-          replyToken: ctx.token,
-          orders,
-        }),
+        body: JSON.stringify(payload),
         signal: controller.signal,
       });
       const contentType = res.headers.get('content-type') || '';
