@@ -28,6 +28,7 @@ import { TransportBookingValidationService } from '../transport-booking-validati
 import { ClientProfileService } from '../client-profiles/client-profile.service';
 import { OrderSplitService } from '../order-split/order-split.service';
 import { AiReplyService } from '../ai-reply/ai-reply.service';
+import { AddressEnrichmentService } from '../geocoding/address-enrichment.service';
 import type { SplitResult } from '../order-split/order-split.types';
 import { sanitizeExtractedValue } from '../../utils/sanitize';
 import { routeTimeBounds } from '../../utils/field-normalize';
@@ -61,9 +62,83 @@ export class EmailProcessingProcessor extends WorkerHost {
     private readonly clientProfileService: ClientProfileService,
     private readonly orderSplitService: OrderSplitService,
     private readonly aiReplyService: AiReplyService,
+    private readonly addressEnrichmentService: AddressEnrichmentService,
     private readonly configService: ConfigService,
   ) {
     super();
+  }
+
+  private mergeMissingFieldValues(
+    fieldValues: Record<string, unknown>,
+    detectedFields: Array<{
+      key: string;
+      value: string;
+    }>,
+  ) {
+    const merged = { ...fieldValues };
+    for (const field of detectedFields ?? []) {
+      const key = (field?.key ?? '').toString().trim();
+      if (!key) continue;
+      const value = sanitizeExtractedValue(field?.value ?? '');
+      if (!value) continue;
+      const current = sanitizeExtractedValue(
+        merged[key] == null ? '' : String(merged[key]),
+      );
+      if (current) continue;
+      merged[key] = value;
+    }
+    return merged;
+  }
+
+  private mergeDetectedFields(
+    base: Array<{
+      key: string;
+      label: string;
+      value: string;
+      confidence: number;
+    }>,
+    additions: Array<{
+      key: string;
+      label: string;
+      value: string;
+      confidence: number;
+    }>,
+  ) {
+    const merged = [...(base ?? [])];
+    const seen = new Set(merged.map((field) => field.key));
+    for (const field of additions ?? []) {
+      if (!field?.key || seen.has(field.key)) continue;
+      const value = sanitizeExtractedValue(field.value ?? '');
+      if (!value) continue;
+      merged.push({
+        key: field.key,
+        label: field.label,
+        value,
+        confidence: field.confidence,
+      });
+      seen.add(field.key);
+    }
+    return merged;
+  }
+
+  private async resolveZipcodeEnrichment(params: {
+    combinedText?: string | null;
+    emailSubject?: string | null;
+    fieldValues?: Record<string, unknown>;
+    detectedFields?: Array<{
+      key: string;
+      label?: string | null;
+      value?: string | null;
+      confidence?: number | null;
+      source?: string | null;
+    }>;
+  }) {
+    return this.addressEnrichmentService.resolveZipcodeHints({
+      combinedText: params.combinedText,
+      emailSubject: params.emailSubject,
+      fieldValues: params.fieldValues,
+      detectedFields: params.detectedFields,
+    });
   }
 
   /**
@@ -100,13 +175,39 @@ export class EmailProcessingProcessor extends WorkerHost {
         { enqueueJobs: false },
       );
 
+    const zipcodeHints = await this.resolveZipcodeEnrichment({
+      combinedText: params.text,
+      emailSubject: params.emailSubject,
+      fieldValues: params.presetFields,
+      detectedFields: det.detectedFields,
+    });
+
+    const enrichedDeterministicFieldValues = this.mergeMissingFieldValues(
+      this.mergeMissingFieldValues(params.presetFields, det.detectedFields),
+      zipcodeHints,
+    );
+
+    const baseValidation =
+      zipcodeHints.length > 0 || Object.keys(params.presetFields).length > 0
+        ? await this.transportBookingValidationService.validateOrderFromFieldValues(
+            {
+              orderId: params.orderId,
+              emailMessageId: params.emailMessageId,
+              emailSubject: params.emailSubject,
+              fieldValues: enrichedDeterministicFieldValues,
+              source: 'email',
+            },
+            { enqueueJobs: false },
+          )
+        : det;
+
     const metrics = this.buildAiDecisionMetrics({
-      requiredMissingCount: det.missingFields.length,
-      recommendedMissingCount: det.validationWarnings?.length ?? 0,
-      detectedFieldCount: det.detectedFields.filter(
+      requiredMissingCount: baseValidation.missingFields.length,
+      recommendedMissingCount: baseValidation.validationWarnings?.length ?? 0,
+      detectedFieldCount: baseValidation.detectedFields.filter(
         (f) => f?.key && !this.aiExcludeKeys.has(f.key),
       ).length,
-      overallConfidence: det.overallConfidence,
+      overallConfidence: baseValidation.overallConfidence,
     });
 
     // 2) Deterministic already sufficient -> done (no AI call).
@@ -134,10 +235,13 @@ export class EmailProcessingProcessor extends WorkerHost {
       attachmentsText: null,
       combinedText: params.text,
       requiredFields: TRANSPORT_BOOKING_FIELD_RULES,
-      detectedFields: det.detectedFields.filter(
-        (f) => f?.key && !this.aiExcludeKeys.has(f.key),
+      detectedFields: this.mergeDetectedFields(
+        baseValidation.detectedFields.filter(
+          (f) => f?.key && !this.aiExcludeKeys.has(f.key),
+        ),
+        zipcodeHints,
       ),
-      missingFields: det.missingFields,
+      missingFields: baseValidation.missingFields,
       department: params.department,
       language: params.language || this.detectLanguage(params.text),
       emailMetadata: {
@@ -159,14 +263,13 @@ export class EmailProcessingProcessor extends WorkerHost {
 
     if (aiResult?.fields) {
       // AI fills gaps; client-profile preset fields stay authoritative.
-      const merged = { ...aiResult.fields, ...params.presetFields } as Record<
-        string,
-        unknown
-      >;
-      for (const d of det.detectedFields) {
+      const merged = { ...aiResult.fields } as Record<string, unknown>;
+      for (const d of baseValidation.detectedFields) {
         if (!d?.key || merged[d.key] != null || !d.value) continue;
         merged[d.key] = d.value;
       }
+      Object.assign(merged, params.presetFields);
+      Object.assign(merged, this.mergeMissingFieldValues({}, zipcodeHints));
       // Route "deliver/load until X" times to the *_time_till slot.
       const routed = routeTimeBounds(merged, params.text);
       await this.transportBookingValidationService.validateOrderFromFieldValues(
@@ -213,10 +316,28 @@ export class EmailProcessingProcessor extends WorkerHost {
     fromEmail: string;
     fromName: string | null;
     subject: string;
+    bodyText?: string | null;
+    bodyHtml?: string | null;
+    attachments?: Array<{ fileName?: string | null; extractedText?: string | null }>;
     mailbox: { department: Department };
   }): Promise<void> {
     const eml = (email as any).rawMimeBase64 ?? null;
-    const analysis = await this.aiExtractionService.analyzeEmail(eml);
+    const combinedText = this.buildCombinedText({
+      subject: email.subject,
+      bodyText: email.bodyText ?? null,
+      bodyHtml: email.bodyHtml ?? null,
+      attachments: (email.attachments ?? []).map((attachment) => ({
+        fileName: attachment.fileName ?? '',
+        extractedText: attachment.extractedText ?? null,
+      })),
+    });
+    const preDetectedZipcodes = await this.resolveZipcodeEnrichment({
+      combinedText,
+      emailSubject: email.subject,
+    });
+    const analysis = await this.aiExtractionService.analyzeEmail(eml, {
+      detectedFields: preDetectedZipcodes,
+    });
     if (!analysis) {
       throw new Error(`AI analysis returned null for emailMessageId=${email.id}`);
     }
@@ -334,12 +455,24 @@ export class EmailProcessingProcessor extends WorkerHost {
           orderId = order.id;
         }
 
+        const preMergedFields =
+          analysis.orders.length === 1
+            ? this.mergeMissingFieldValues(o.fields, preDetectedZipcodes)
+            : o.fields;
+        const orderZipcodeHints = await this.resolveZipcodeEnrichment({
+          fieldValues: preMergedFields,
+        });
+        const finalFields = this.mergeMissingFieldValues(
+          preMergedFields,
+          orderZipcodeHints,
+        );
+
         await this.transportBookingValidationService.validateOrderFromFieldValues(
           {
             orderId,
             emailMessageId: email.id,
             emailSubject: email.subject ?? '',
-            fieldValues: o.fields,
+            fieldValues: finalFields,
             source: 'ai',
           },
           { enqueueJobs },
@@ -357,6 +490,7 @@ export class EmailProcessingProcessor extends WorkerHost {
                   emlBase64: emlPreview,
                   emailSubject: email.subject,
                   emailMessageId: email.id,
+                  detectedFields: preDetectedZipcodes,
                 },
               } as any,
               responseJson: (analysis.rawResponse ?? analysis) as any,
@@ -448,8 +582,24 @@ export class EmailProcessingProcessor extends WorkerHost {
     linkMatchType: EmailLinkMethod;
   }): Promise<void> {
     const { replyEmailMessage, existingOrder, linkMatchType } = params;
+    const combinedText = this.buildCombinedText({
+      subject: replyEmailMessage.subject ?? null,
+      bodyText: replyEmailMessage.bodyText ?? null,
+      bodyHtml: replyEmailMessage.bodyHtml ?? null,
+      attachments: (replyEmailMessage.attachments ?? []).map((attachment: any) => ({
+        fileName: attachment.fileName ?? '',
+        extractedText: attachment.extractedText ?? null,
+      })),
+    });
+    const preDetectedZipcodes = await this.resolveZipcodeEnrichment({
+      combinedText,
+      emailSubject: replyEmailMessage.subject ?? null,
+    });
     const analysis = await this.aiExtractionService.analyzeEmail(
       replyEmailMessage.rawMimeBase64 ?? null,
+      {
+        detectedFields: preDetectedZipcodes,
+      },
     );
     if (!analysis) {
       throw new Error(
@@ -520,7 +670,21 @@ export class EmailProcessingProcessor extends WorkerHost {
         entry = { order: target, fields: seedFromExisting(target) };
         pending.set(target.id, entry);
       }
-      for (const [k, v] of Object.entries((ao as any).fields ?? {})) {
+      const aiFields =
+        analysis.orders.length === 1
+          ? this.mergeMissingFieldValues(
+              (ao as any).fields ?? {},
+              preDetectedZipcodes,
+            )
+          : ((ao as any).fields ?? {});
+      const orderZipcodeHints = await this.resolveZipcodeEnrichment({
+        fieldValues: aiFields,
+      });
+      const enrichedAiFields = this.mergeMissingFieldValues(
+        aiFields,
+        orderZipcodeHints,
+      );
+      for (const [k, v] of Object.entries(enrichedAiFields)) {
         if (!entry.fields[k] && v != null && v.toString().trim() !== '') {
           entry.fields[k] = v;
         }
@@ -587,6 +751,7 @@ export class EmailProcessingProcessor extends WorkerHost {
                 ? `${String(replyEml).slice(0, 120)}…(${String(replyEml).length} bytes)`
                 : null,
               replyEmailMessageId: replyEmailMessage.id,
+              detectedFields: preDetectedZipcodes,
             },
           } as any,
           responseJson: (analysis.rawResponse ?? analysis) as any,
@@ -1049,22 +1214,53 @@ export class EmailProcessingProcessor extends WorkerHost {
       .filter((text: string) => text.length > 0)
       .join('\n\n');
 
+    const zipcodeHints = await this.resolveZipcodeEnrichment({
+      combinedText: mergedText,
+      emailSubject: existingOrder.emailMessage.subject ?? '',
+      detectedFields: [
+        ...deterministic.detectedFields,
+        ...(existingOrder.fields ?? []).map((field: any) => ({
+          key: field.key,
+          label: field.label,
+          value: field.value,
+          confidence: field.confidence,
+          source: field.source,
+        })),
+      ],
+    });
+
     const mergedDeterministic = this.buildFieldPayload([
       ...this.toMergeableFieldsFromOrder(existingOrder),
       ...this.toMergeableFieldsFromDetected(
         deterministic.detectedFields,
         'EMAIL',
       ),
+      ...this.toMergeableFieldsFromDetected(zipcodeHints, 'EMAIL'),
     ]);
 
+    const baseValidation =
+      zipcodeHints.length > 0
+        ? await this.transportBookingValidationService.validateOrderFromFieldValues(
+            {
+              orderId: existingOrder.id,
+              emailMessageId: replyEmailMessage.id,
+              emailSubject: existingOrder.emailMessage.subject ?? '',
+              fieldValues: mergedDeterministic.fieldValues,
+              fieldMetaByKey: mergedDeterministic.fieldMetaByKey,
+              source: 'email',
+            },
+            { enqueueJobs: false },
+          )
+        : deterministic;
+
     const aiDecisionMetrics = this.buildAiDecisionMetrics({
-      requiredMissingCount: deterministic.missingFields.length,
+      requiredMissingCount: baseValidation.missingFields.length,
       recommendedMissingCount:
-        deterministic.validationWarnings?.length ?? 0,
-      detectedFieldCount: deterministic.detectedFields.filter(
+        baseValidation.validationWarnings?.length ?? 0,
+      detectedFieldCount: baseValidation.detectedFields.filter(
         (field) => field?.key && !this.aiExcludeKeys.has(field.key),
       ).length,
-      overallConfidence: deterministic.overallConfidence,
+      overallConfidence: baseValidation.overallConfidence,
     });
     const shouldAi = this.shouldUseAiExtraction(aiDecisionMetrics);
 
@@ -1095,13 +1291,13 @@ export class EmailProcessingProcessor extends WorkerHost {
           .map((field) => ({
             key: field.key,
             label:
-              deterministic.detectedFields.find(
+              baseValidation.detectedFields.find(
                 (item) => item.key === field.key,
               )?.label ?? field.key,
             value: field.value ?? '',
             confidence: field.confidence ?? 0,
           })),
-        missingFields: deterministic.missingFields,
+        missingFields: baseValidation.missingFields,
         department: existingOrder.department ?? null,
         language: this.detectLanguage(mergedText),
         emailMetadata: {
@@ -1655,15 +1851,41 @@ export class EmailProcessingProcessor extends WorkerHost {
       const profileFields = clientProfile
         ? this.clientProfileService.derive(clientProfile, combinedText)
         : {};
+      const zipcodeHints = await this.resolveZipcodeEnrichment({
+        combinedText,
+        emailSubject: emailForValidation.subject ?? '',
+        fieldValues: profileFields,
+        detectedFields: deterministic.detectedFields,
+      });
+      const supplementalFields = this.mergeMissingFieldValues(
+        profileFields,
+        zipcodeHints,
+      ) as Record<string, string>;
+      const baseValidation =
+        Object.keys(supplementalFields).length > 0
+          ? await this.transportBookingValidationService.validateOrderFromFieldValues(
+              {
+                orderId: order.id,
+                emailMessageId: emailForValidation.id,
+                emailSubject: emailForValidation.subject ?? '',
+                fieldValues: this.mergeMissingFieldValues(
+                  supplementalFields,
+                  deterministic.detectedFields,
+                ),
+                source: 'email',
+              },
+              { enqueueJobs: false },
+            )
+          : deterministic;
 
       const aiDecisionMetrics = this.buildAiDecisionMetrics({
-        requiredMissingCount: deterministic.missingFields.length,
+        requiredMissingCount: baseValidation.missingFields.length,
         recommendedMissingCount:
-          deterministic.validationWarnings?.length ?? 0,
-        detectedFieldCount: deterministic.detectedFields.filter(
+          baseValidation.validationWarnings?.length ?? 0,
+        detectedFieldCount: baseValidation.detectedFields.filter(
           (field) => field?.key && !this.aiExcludeKeys.has(field.key),
         ).length,
-        overallConfidence: deterministic.overallConfidence,
+        overallConfidence: baseValidation.overallConfidence,
       });
       const shouldAi = this.shouldUseAiExtraction(aiDecisionMetrics);
 
@@ -1687,10 +1909,13 @@ export class EmailProcessingProcessor extends WorkerHost {
           attachmentsText: attachmentsText || null,
           combinedText,
           requiredFields: TRANSPORT_BOOKING_FIELD_RULES,
-          detectedFields: deterministic.detectedFields.filter(
-            (f) => f?.key && !this.aiExcludeKeys.has(f.key),
+          detectedFields: this.mergeDetectedFields(
+            baseValidation.detectedFields.filter(
+              (f) => f?.key && !this.aiExcludeKeys.has(f.key),
+            ),
+            zipcodeHints,
           ),
-          missingFields: deterministic.missingFields,
+          missingFields: baseValidation.missingFields,
           department: order.department ?? null,
           language:
             [
@@ -1723,14 +1948,14 @@ export class EmailProcessingProcessor extends WorkerHost {
             string,
             unknown
           >;
-          for (const d of deterministic.detectedFields) {
+          for (const d of baseValidation.detectedFields) {
             if (!d?.key) continue;
             if (mergedFields[d.key] != null) continue;
             if (!d.value) continue;
             mergedFields[d.key] = d.value;
           }
           // Client-profile deterministic fields are authoritative over the AI.
-          Object.assign(mergedFields, profileFields);
+          Object.assign(mergedFields, supplementalFields);
 
           // Route "deliver/load until X" times to the *_time_till slot.
           const routedFields = routeTimeBounds(mergedFields, combinedText);
@@ -1762,8 +1987,8 @@ export class EmailProcessingProcessor extends WorkerHost {
             orderId: order.id,
             emailMessageId: emailForValidation.id,
             emailSubject: emailForValidation.subject ?? '',
-            detectedFields: deterministic.detectedFields,
-            profileFields,
+            detectedFields: baseValidation.detectedFields,
+            profileFields: supplementalFields,
             combinedText,
           });
           if (!applied) {
@@ -1790,8 +2015,8 @@ export class EmailProcessingProcessor extends WorkerHost {
           orderId: order.id,
           emailMessageId: emailForValidation.id,
           emailSubject: emailForValidation.subject ?? '',
-          detectedFields: deterministic.detectedFields,
-          profileFields,
+          detectedFields: baseValidation.detectedFields,
+          profileFields: supplementalFields,
           combinedText,
         });
         if (!applied) {

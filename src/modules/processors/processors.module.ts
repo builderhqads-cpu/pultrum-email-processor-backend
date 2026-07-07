@@ -20,6 +20,7 @@ import { ClientProfileModule } from '../client-profiles/client-profile.module';
 import { OrderSplitModule } from '../order-split/order-split.module';
 import { AiReplyModule } from '../ai-reply/ai-reply.module';
 import { FieldMergeService } from '../field-merge/field-merge.service';
+import { GeocodingModule } from '../geocoding/geocoding.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { FieldMergeService } from '../field-merge/field-merge.service';
     ClientProfileModule,
     OrderSplitModule,
     AiReplyModule,
+    GeocodingModule,
   ],
   providers: [
     ProcessorsService,

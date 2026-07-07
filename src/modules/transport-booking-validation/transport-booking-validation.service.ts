@@ -319,6 +319,17 @@ export class TransportBookingValidationService {
     return extractLabeledFields(text);
   }
 
+  previewDetectedFieldsFromText(params: {
+    haystack: string;
+    emailSubject?: string | null;
+  }) {
+    return this.detectFromRules({
+      haystack: params.haystack,
+      orderId: 'preview-geocoding',
+      emailSubject: params.emailSubject ?? '',
+    }).detectedFields;
+  }
+
   private buildCombinedText(input: {
     subject?: string | null;
     bodyText?: string | null;

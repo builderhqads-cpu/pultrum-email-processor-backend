@@ -13,6 +13,7 @@ import {
   getRuleRequirement,
   TRANSPORT_BOOKING_FIELD_RULES,
 } from '../required-fields/transport-booking-field-rules';
+import { AddressEnrichmentService } from '../geocoding/address-enrichment.service';
 
 export type AiExtractionPayload = {
   orderId: string;
@@ -42,6 +43,13 @@ export type AiExtractionPayload = {
   emailMetadata?: Record<string, any>;
   /** Raw original email (.eml, base64) — the ONLY content sent in the new flow. */
   email?: string | null;
+};
+
+export type AiPreDetectedField = {
+  key: string;
+  label: string;
+  value: string;
+  confidence: number;
 };
 
 /** One order returned by the AI in the new "send-the-eml" flow. */
@@ -85,7 +93,29 @@ export class AiExtractionService {
     private readonly configService: ConfigService,
     private readonly prismaService: PrismaService,
     private readonly auditLogService: AuditLogService,
+    private readonly addressEnrichmentService: AddressEnrichmentService,
   ) {}
+
+  private mergeDetectedFields(
+    base: AiExtractionPayload['detectedFields'],
+    additions: AiPreDetectedField[],
+  ) {
+    const merged = [...(base ?? [])];
+    const seen = new Set(merged.map((field) => field.key));
+    for (const field of additions ?? []) {
+      if (!field?.key || seen.has(field.key)) continue;
+      const value = sanitizeExtractedValue(field.value ?? '');
+      if (!value) continue;
+      merged.push({
+        key: field.key,
+        label: field.label,
+        value,
+        confidence: field.confidence,
+      });
+      seen.add(field.key);
+    }
+    return merged;
+  }
 
   private buildCombinedText(input: {
     subject?: string | null;
@@ -585,6 +615,23 @@ export class AiExtractionService {
         return null;
       }
 
+      const zipcodeHints =
+        await this.addressEnrichmentService.resolveZipcodeHints({
+          combinedText: payload.combinedText,
+          emailSubject: payload.subject,
+          detectedFields: payload.detectedFields,
+        });
+      const enrichedDetectedFields = this.mergeDetectedFields(
+        payload.detectedFields,
+        zipcodeHints,
+      );
+      const hintedKeys = new Set<string>(
+        zipcodeHints.map((field) => field.key),
+      );
+      const enrichedMissingFields = (payload.missingFields ?? []).filter(
+        (field) => !hintedKeys.has(field.key),
+      );
+
       const timeoutMs = Number(
         this.configService.get<string>('AI_EXTRACTION_TIMEOUT_MS') || '120000',
       );
@@ -603,6 +650,8 @@ export class AiExtractionService {
         bodyText: this.maybeFixMojibake(payload.bodyText),
         attachmentsText: this.maybeFixMojibake(payload.attachmentsText),
         combinedText: this.maybeFixMojibake(payload.combinedText),
+        detectedFields: enrichedDetectedFields,
+        missingFields: enrichedMissingFields,
       };
 
       const res = await fetch(url, {
@@ -665,10 +714,23 @@ export class AiExtractionService {
         return null;
       }
 
+      const responseDetectedFields = this.mergeDetectedFields(
+        this.parseDetectedFieldsFromResponse(raw),
+        zipcodeHints,
+      );
+      const responseMissingFields = this.parseMissingFieldsFromResponse(raw).filter(
+        (field) => !hintedKeys.has(field.key),
+      );
+      for (const hint of zipcodeHints) {
+        if (!fields[hint.key]) {
+          fields[hint.key] = hint.value;
+        }
+      }
+
       return {
         fields,
-        detectedFields: this.parseDetectedFieldsFromResponse(raw),
-        missingFields: this.parseMissingFieldsFromResponse(raw),
+        detectedFields: responseDetectedFields,
+        missingFields: responseMissingFields,
         rawResponse: raw,
       };
     } catch (err: any) {
@@ -684,7 +746,10 @@ export class AiExtractionService {
    * Returns the classification plus the orders it found (1 or many), or null on
    * failure (caller decides how to handle — must NOT lose the email).
    */
-  async analyzeEmail(eml: string | null | undefined): Promise<AiEmailAnalysis | null> {
+  async analyzeEmail(
+    eml: string | null | undefined,
+    options?: { detectedFields?: AiPreDetectedField[] },
+  ): Promise<AiEmailAnalysis | null> {
     const url = this.resolveEmlProcessUrl();
     if (!url) {
       this.logger.warn('AI_API_BASE_URL not configured; skipping AI analysis');
@@ -714,7 +779,12 @@ export class AiExtractionService {
           'Content-Type': 'application/json',
           ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
         },
-        body: JSON.stringify({ emlBase64: eml }),
+        body: JSON.stringify({
+          emlBase64: eml,
+          ...(options?.detectedFields?.length
+            ? { detectedFields: options.detectedFields }
+            : {}),
+        }),
         signal: controller.signal,
       });
       clearTimeout(timeout);
