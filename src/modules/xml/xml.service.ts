@@ -299,6 +299,12 @@ export class XmlService {
   }
 
   async generateOrderXml(orderId: string): Promise<string> {
+    const retryableStatuses = new Set<OrderStatus>([
+      OrderStatus.READY_TO_XML,
+      OrderStatus.CREATIVE_GEARS_REJECTED,
+      OrderStatus.FAILED,
+    ]);
+
     const order = await this.prismaService.transportOrder.findUnique({
       where: { id: orderId },
       include: {
@@ -322,9 +328,9 @@ export class XmlService {
       throw new Error(`TransportOrder not found: id=${orderId}`);
     }
 
-    if (order.status !== OrderStatus.READY_TO_XML) {
+    if (!retryableStatuses.has(order.status)) {
       throw new Error(
-        `Cannot generate XML for orderId=${orderId}. Order status must be READY_TO_XML (current=${order.status}).`,
+        `Cannot generate XML for orderId=${orderId}. Order status must be READY_TO_XML or retryable after XML delivery failure/rejection (current=${order.status}).`,
       );
     }
 

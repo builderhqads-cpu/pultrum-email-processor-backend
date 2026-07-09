@@ -680,6 +680,12 @@ export class OrdersService {
   }
 
   async sendXml(id: string) {
+    const retryableStatuses = new Set<OrderStatus>([
+      OrderStatus.READY_TO_XML,
+      OrderStatus.CREATIVE_GEARS_REJECTED,
+      OrderStatus.FAILED,
+    ]);
+
     const order = await this.prismaService.transportOrder.findUnique({
       where: { id },
       select: {
@@ -699,9 +705,9 @@ export class OrdersService {
         `Order cannot send XML while required fields are missing: ${keys}`,
       );
     }
-    if (order.status !== OrderStatus.READY_TO_XML) {
+    if (!retryableStatuses.has(order.status)) {
       throw new NotFoundException(
-        `Order must be READY_TO_XML before sending XML (current=${order.status})`,
+        `Order must be READY_TO_XML or retryable after XML delivery failure/rejection (current=${order.status})`,
       );
     }
 

@@ -39,6 +39,12 @@ export class CreativeGearsService {
     return `Basic ${token}`;
   }
 
+  private responsePreview(value: string | null | undefined) {
+    const text = (value ?? '').trim();
+    if (!text) return '(empty response)';
+    return text.length > 2000 ? `${text.slice(0, 2000)}...` : text;
+  }
+
   private async getOrCreatePendingXmlDelivery(orderId: string) {
     const existingPending = await this.prismaService.xmlDelivery.findFirst({
       where: { orderId, status: XmlDeliveryStatus.PENDING },
@@ -168,6 +174,16 @@ export class CreativeGearsService {
         });
       });
 
+      if (accepted) {
+        this.logger.log(
+          `Creative Gears accepted XML: orderId=${orderId} deliveryId=${delivery.id} status=${res.status}`,
+        );
+      } else {
+        this.logger.warn(
+          `Creative Gears rejected XML: orderId=${orderId} deliveryId=${delivery.id} status=${res.status} ${res.statusText} response=${this.responsePreview(responseText)}`,
+        );
+      }
+
       return {
         mocked: false,
         httpStatus: res.status,
@@ -196,6 +212,9 @@ export class CreativeGearsService {
           data: { status: OrderStatus.FAILED },
         });
       });
+      this.logger.error(
+        `Creative Gears XML delivery failed: orderId=${orderId} deliveryId=${delivery.id} error=${message} response=${this.responsePreview(responseText)}`,
+      );
       throw err;
     } finally {
       clearTimeout(timeout);
