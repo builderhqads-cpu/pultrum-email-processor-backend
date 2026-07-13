@@ -1,6 +1,9 @@
-import { sanitizeExtractedValue } from './sanitize';
-import { htmlToPlainText } from './sanitize';
-import { normalizeEscapedNewlines } from './sanitize';
+import {
+  fixCommonMojibake,
+  htmlToPlainText,
+  normalizeEscapedNewlines,
+  sanitizeExtractedValue,
+} from './sanitize';
 
 describe('sanitizeExtractedValue', () => {
   it('removes <br> tags', () => {
@@ -11,8 +14,12 @@ describe('sanitizeExtractedValue', () => {
     expect(sanitizeExtractedValue('250</div>')).toBe('250');
   });
 
-  it('keeps special characters', () => {
-    expect(sanitizeExtractedValue('Rodgaustraße 7<br>')).toBe('Rodgaustraße 7');
+  it('repairs common mojibake sequences', () => {
+    expect(
+      sanitizeExtractedValue('Rodgaustra\u00C3\u0178e 7<br>'),
+    ).toBe(
+      'Rodgaustraße 7',
+    );
   });
 
   it('keeps email characters', () => {
@@ -36,6 +43,20 @@ describe('sanitizeExtractedValue', () => {
   it('decodes entities and strips tags', () => {
     expect(sanitizeExtractedValue('123&lt;br&gt;')).toBe('123');
     expect(sanitizeExtractedValue('250&lt;/div&gt;')).toBe('250');
+  });
+});
+
+describe('fixCommonMojibake', () => {
+  it('repairs utf8 decoded as latin1', () => {
+    expect(fixCommonMojibake('Industriestra\u00C3\u0178e 45')).toBe(
+      'Industriestraße 45',
+    );
+  });
+
+  it('leaves already-correct text unchanged', () => {
+    expect(fixCommonMojibake('Industriestraße 45')).toBe(
+      'Industriestraße 45',
+    );
   });
 });
 

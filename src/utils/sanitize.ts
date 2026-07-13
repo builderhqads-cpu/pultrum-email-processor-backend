@@ -28,6 +28,52 @@ const decodeHtmlEntities = (input: string) => {
     });
 };
 
+export function fixCommonMojibake(value: string): string {
+  const raw = (value ?? '').toString();
+  if (!raw) return '';
+
+  // Heuristic: sequences like "Ã", "Â" usually mean UTF-8 bytes were decoded
+  // as latin1/win-1252 somewhere upstream.
+  if (!/[ÃÂ]/.test(raw)) return raw;
+
+  let explicitFixed = raw;
+  const replacements: Array<[string, string]> = [
+    ['\u00C3\u0178', 'ß'],
+    ['\u00C3\u00A4', 'ä'],
+    ['\u00C3\u00B6', 'ö'],
+    ['\u00C3\u00BC', 'ü'],
+    ['\u00C3\u0084', 'Ä'],
+    ['\u00C3\u0096', 'Ö'],
+    ['\u00C3\u009C', 'Ü'],
+    ['\u00C3\u00A9', 'é'],
+    ['\u00C3\u00A8', 'è'],
+    ['\u00C3\u00AA', 'ê'],
+    ['\u00C3\u00A1', 'á'],
+    ['\u00C3\u00A0', 'à'],
+    ['\u00C3\u00B3', 'ó'],
+    ['\u00C3\u00B2', 'ò'],
+    ['\u00C3\u00BA', 'ú'],
+    ['\u00C3\u00B9', 'ù'],
+    ['\u00C3\u00AD', 'í'],
+    ['\u00C3\u00AC', 'ì'],
+    ['\u00C3\u00B1', 'ñ'],
+    ['\u00C2\u00A0', ' '],
+    ['\u00C2', ''],
+  ];
+  for (const [from, to] of replacements) {
+    explicitFixed = explicitFixed.split(from).join(to);
+  }
+
+  try {
+    const fixed = Buffer.from(explicitFixed, 'latin1').toString('utf8');
+    const score = (input: string) => (input.match(/[ÃÂ]/g) || []).length;
+    if (score(fixed) < score(explicitFixed)) return fixed;
+    return score(explicitFixed) < score(raw) ? explicitFixed : raw;
+  } catch {
+    return explicitFixed;
+  }
+}
+
 export function sanitizeExtractedValue(value: string): string {
   const raw = (value ?? '').toString();
   if (!raw.trim()) return '';
@@ -56,7 +102,7 @@ export function sanitizeExtractedValue(value: string): string {
   out = out.replace(/\s*\n\s*/g, ' ');
   out = out.replace(/\s+/g, ' ').trim();
 
-  return out;
+  return fixCommonMojibake(out);
 }
 
 // Convert an HTML email body to readable plain text while PRESERVING line
@@ -97,7 +143,7 @@ export function htmlToPlainText(html: string): string {
   out = out.replace(/[ \t\f\v]+/g, ' ');
   out = out.replace(/ *\n */g, '\n');
   out = out.replace(/\n{3,}/g, '\n\n');
-  out = out.trim();
+  out = fixCommonMojibake(out.trim());
 
   return out;
 }

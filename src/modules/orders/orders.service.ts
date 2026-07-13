@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CustomerReplyDraftStatus,
@@ -57,6 +59,16 @@ export class OrdersService {
     private readonly aiRequestQueue: Queue,
   ) {}
 
+  private getXmlDebugDirectory() {
+    return join(process.cwd(), 'debug', 'xml-dumps');
+  }
+
+  private buildXmlDebugFileName(orderId: string) {
+    const safeOrderId = orderId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    return `${timestamp}_${safeOrderId}.xml`;
+  }
+
   /** Generates the Creative Gears XML on demand (read-only) for preview. */
   async previewXml(id: string) {
     try {
@@ -65,6 +77,35 @@ export class OrdersService {
     } catch (err: any) {
       throw new BadRequestException(
         err?.message ?? 'Failed to generate XML preview',
+      );
+    }
+  }
+
+  /** Generates the XML and persists a local debug copy for manual inspection. */
+  async dumpXmlDebug(id: string) {
+    try {
+      const xml = await this.xmlService.generateOrderXml(id);
+      const directory = this.getXmlDebugDirectory();
+      const fileName = this.buildXmlDebugFileName(id);
+      const filePath = join(directory, fileName);
+
+      await mkdir(directory, { recursive: true });
+      await writeFile(filePath, xml, 'utf8');
+
+      this.logger.log(
+        `XML debug dump created: orderId=${id} path=${filePath}`,
+      );
+
+      return {
+        ok: true,
+        orderId: id,
+        fileName,
+        filePath,
+        xmlLength: xml.length,
+      };
+    } catch (err: any) {
+      throw new BadRequestException(
+        err?.message ?? 'Failed to create XML debug dump',
       );
     }
   }

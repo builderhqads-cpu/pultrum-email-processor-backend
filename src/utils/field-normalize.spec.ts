@@ -1,5 +1,6 @@
 import {
   blankIfZero,
+  blankIfZeroPreservingDecimalString,
   dropNameIfCity,
   normalizeFieldMap,
   normalizeQuantity,
@@ -130,6 +131,20 @@ describe('field-normalize', () => {
       expect(blankIfZero('12,5')).toBe('12.5');
       expect(blankIfZero('1200 kg')).toBe('1200');
       expect(blankIfZero('14.536,350 kg')).toBe('14536.35');
+    });
+  });
+
+  describe('blankIfZeroPreservingDecimalString', () => {
+    it('preserves normalized decimal strings produced by calculations', () => {
+      expect(blankIfZeroPreservingDecimalString('16.333')).toBe('16.333');
+      expect(blankIfZeroPreservingDecimalString('133.280')).toBe('133.280');
+      expect(blankIfZeroPreservingDecimalString('0.750')).toBe('0.750');
+    });
+
+    it('still blanks zero and falls back to regular normalization otherwise', () => {
+      expect(blankIfZeroPreservingDecimalString('0.000')).toBe('');
+      expect(blankIfZeroPreservingDecimalString('12,5')).toBe('12.5');
+      expect(blankIfZeroPreservingDecimalString('1200 kg')).toBe('1200');
     });
   });
 

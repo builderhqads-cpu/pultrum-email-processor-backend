@@ -135,3 +135,85 @@ describe('XmlService original documents packaging', () => {
     expect(xml).not.toContain('<documents>');
   });
 });
+
+describe('XmlService generateOrderXml normalization', () => {
+  it('recalculates stale calculated fields and fixes mojibake before serializing', async () => {
+    const prisma = {
+      transportOrder: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'order-1',
+          status: 'READY_TO_XML',
+          department: 'OPEN_TRANSPORT',
+          customerEmail: 'customer@example.com',
+          missingFields: [],
+          fields: [
+            { key: 'invoice_reference', value: 'INV-2026-1507' },
+            { key: 'pickup_reference', value: 'PU-2026-1507' },
+            { key: 'pickup_date', value: '2026-07-15' },
+            { key: 'pickup_time', value: '08:30' },
+            { key: 'pickup_name', value: 'Amsterdam Timber Logistics B.V.' },
+            { key: 'pickup_address', value: 'Herengracht 182' },
+            { key: 'pickup_zipcode', value: '1016 BR' },
+            { key: 'pickup_city', value: 'Amsterdam' },
+            { key: 'pickup_country', value: 'NL' },
+            { key: 'delivery_reference', value: 'DL-2026-1507' },
+            { key: 'delivery_date', value: '2026-07-16' },
+            { key: 'delivery_time', value: '10:00' },
+            { key: 'delivery_name', value: 'Holzbau Nord GmbH' },
+            {
+              key: 'delivery_address',
+              value: 'Industriestra\u00C3\u0178e 45',
+            },
+            { key: 'delivery_zipcode', value: '28195' },
+            { key: 'delivery_city', value: 'Bremen' },
+            { key: 'delivery_country', value: 'DE' },
+            { key: 'cargo_unit_amount', value: '8' },
+            { key: 'cargo_unit_id', value: 'pallet' },
+            { key: 'cargo_weight', value: '18500' },
+            { key: 'length', value: '1200' },
+            { key: 'width', value: '240' },
+            { key: 'height', value: '320' },
+            { key: 'cargo_loading_meter', value: '96000' },
+            { key: 'cargo_volume', value: '737280' },
+            { key: 'goods_loading_meter', value: '96000' },
+            { key: 'goods_volume', value: '737280' },
+          ],
+          emailMessage: {
+            subject: 'Transportopdracht',
+            attachments: [],
+          },
+        }),
+      },
+      orderField: {
+        upsert: jest.fn().mockResolvedValue(null),
+      },
+      xmlDelivery: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue(null),
+      },
+    } as any;
+
+    const service = new XmlService(prisma, {} as any);
+
+    const xml = await service.generateOrderXml('order-1');
+
+    expect(xml).toContain('<address1>Industriestraße 45</address1>');
+    expect(xml).toContain('<loadingmeter>96.000</loadingmeter>');
+    expect(xml).toContain('<volume>737.280</volume>');
+
+    expect(prisma.orderField.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          orderId_key: { orderId: 'order-1', key: 'cargo_loading_meter' },
+        },
+        update: expect.objectContaining({ value: '96.000' }),
+      }),
+    );
+    expect(prisma.orderField.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { orderId_key: { orderId: 'order-1', key: 'cargo_volume' } },
+        update: expect.objectContaining({ value: '737.280' }),
+      }),
+    );
+  });
+});

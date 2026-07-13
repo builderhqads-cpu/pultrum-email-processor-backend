@@ -13,9 +13,13 @@ import {
   getRuleRequirement,
   TRANSPORT_BOOKING_FIELD_RULES,
 } from '../required-fields/transport-booking-field-rules';
-import { sanitizeExtractedValue } from '../../utils/sanitize';
+import {
+  fixCommonMojibake,
+  sanitizeExtractedValue,
+} from '../../utils/sanitize';
 import {
   blankIfZero,
+  blankIfZeroPreservingDecimalString,
   dropNameIfCity,
   normalizeQuantity,
   parseDecimal,
@@ -40,7 +44,13 @@ export class XmlService {
   }
 
   private getFieldValue(map: Map<string, string>, key: string): string {
-    return sanitizeExtractedValue((map.get(key) ?? '').toString());
+    return fixCommonMojibake(
+      sanitizeExtractedValue((map.get(key) ?? '').toString()),
+    );
+  }
+
+  private formatCalculatedValue(value: number | null) {
+    return value == null || !Number.isFinite(value) ? '' : value.toFixed(3);
   }
 
   private calcVolume(params: {
@@ -109,7 +119,7 @@ export class XmlService {
       .replace(/[<>:"/\\|?*]+/g, '_')
       .replace(/\s+/g, ' ');
 
-    return normalized || fallback;
+    return fixCommonMojibake(normalized || fallback);
   }
 
   private isSupportedOriginalAttachment(input: {
@@ -386,40 +396,44 @@ export class XmlService {
     const width = this.getFieldValue(fieldMap, 'width');
     const height = this.getFieldValue(fieldMap, 'height');
 
-    let cargoVolume = this.getFieldValue(fieldMap, 'cargo_volume');
-    if (!cargoVolume) {
-      const v = this.calcVolume({ length, width, height, unitAmount });
-      if (v != null) {
-        cargoVolume = v.toFixed(3);
-        await this.upsertOrderField({
-          orderId: order.id,
-          key: 'cargo_volume',
-          value: cargoVolume,
-        });
-        fieldMap.set('cargo_volume', cargoVolume);
-      }
+    const computedCargoVolume = this.formatCalculatedValue(
+      this.calcVolume({ length, width, height, unitAmount }),
+    );
+    let cargoVolume =
+      computedCargoVolume || this.getFieldValue(fieldMap, 'cargo_volume');
+    if (computedCargoVolume && cargoVolume !== this.getFieldValue(fieldMap, 'cargo_volume')) {
+      await this.upsertOrderField({
+        orderId: order.id,
+        key: 'cargo_volume',
+        value: computedCargoVolume,
+      });
+      fieldMap.set('cargo_volume', computedCargoVolume);
     }
 
-    let cargoLoadingMeter = this.getFieldValue(fieldMap, 'cargo_loading_meter');
-    if (!cargoLoadingMeter || cargoLoadingMeter === '0') {
-      const ldm = this.calcLoadingMeterCm({ length, width, unitAmount });
-      if (ldm != null) {
-        cargoLoadingMeter = ldm.toFixed(3);
-        await this.upsertOrderField({
-          orderId: order.id,
-          key: 'cargo_loading_meter',
-          value: cargoLoadingMeter,
-        });
-        fieldMap.set('cargo_loading_meter', cargoLoadingMeter);
-      } else {
-        // Not computable -> leave BLANK (never "0").
-        cargoLoadingMeter = '';
-      }
+    const computedCargoLoadingMeter = this.formatCalculatedValue(
+      this.calcLoadingMeterCm({ length, width, unitAmount }),
+    );
+    let cargoLoadingMeter =
+      computedCargoLoadingMeter ||
+      this.getFieldValue(fieldMap, 'cargo_loading_meter');
+    if (
+      computedCargoLoadingMeter &&
+      cargoLoadingMeter !== this.getFieldValue(fieldMap, 'cargo_loading_meter')
+    ) {
+      await this.upsertOrderField({
+        orderId: order.id,
+        key: 'cargo_loading_meter',
+        value: computedCargoLoadingMeter,
+      });
+      fieldMap.set('cargo_loading_meter', computedCargoLoadingMeter);
+    } else if (!cargoLoadingMeter || cargoLoadingMeter === '0') {
+      // Not computable -> leave BLANK (never "0").
+      cargoLoadingMeter = '';
     }
 
-    let goodsVolume = this.getFieldValue(fieldMap, 'goods_volume');
-    if (!goodsVolume && cargoVolume) {
-      goodsVolume = cargoVolume;
+    const existingGoodsVolume = this.getFieldValue(fieldMap, 'goods_volume');
+    let goodsVolume = cargoVolume || existingGoodsVolume;
+    if (goodsVolume && goodsVolume !== existingGoodsVolume) {
       await this.upsertOrderField({
         orderId: order.id,
         key: 'goods_volume',
@@ -428,9 +442,12 @@ export class XmlService {
       fieldMap.set('goods_volume', goodsVolume);
     }
 
-    let goodsLoadingMeter = this.getFieldValue(fieldMap, 'goods_loading_meter');
-    if (!goodsLoadingMeter && cargoLoadingMeter) {
-      goodsLoadingMeter = cargoLoadingMeter;
+    const existingGoodsLoadingMeter = this.getFieldValue(
+      fieldMap,
+      'goods_loading_meter',
+    );
+    let goodsLoadingMeter = cargoLoadingMeter || existingGoodsLoadingMeter;
+    if (goodsLoadingMeter && goodsLoadingMeter !== existingGoodsLoadingMeter) {
       await this.upsertOrderField({
         orderId: order.id,
         key: 'goods_loading_meter',
@@ -658,8 +675,14 @@ export class XmlService {
     cargo.ele('unitamount').txt(normalizeQuantity(unitAmount)).up();
     cargo.ele('unit_id').txt(unitId).up();
     cargo.ele('weight').txt(blankIfZero(weight)).up();
-    cargo.ele('loadingmeter').txt(blankIfZero(cargoLoadingMeter)).up();
-    cargo.ele('volume').txt(blankIfZero(cargoVolume)).up();
+    cargo
+      .ele('loadingmeter')
+      .txt(blankIfZeroPreservingDecimalString(cargoLoadingMeter))
+      .up();
+    cargo
+      .ele('volume')
+      .txt(blankIfZeroPreservingDecimalString(cargoVolume))
+      .up();
     cargo
       .ele('externalshipmentid')
       .txt(this.getFieldValue(fieldMap, 'external_shipment_id'))
@@ -672,8 +695,14 @@ export class XmlService {
     goodslines.ele('unit_id', { matchmode: '1' }).txt(goodsUnitId).up();
     goodslines.ele('product_id', { matchmode: '1' }).txt(productId).up();
     goodslines.ele('weight').txt(blankIfZero(goodsWeight)).up();
-    goodslines.ele('loadingmeter').txt(blankIfZero(goodsLoadingMeter)).up();
-    goodslines.ele('volume').txt(blankIfZero(goodsVolume)).up();
+    goodslines
+      .ele('loadingmeter')
+      .txt(blankIfZeroPreservingDecimalString(goodsLoadingMeter))
+      .up();
+    goodslines
+      .ele('volume')
+      .txt(blankIfZeroPreservingDecimalString(goodsVolume))
+      .up();
     goodslines.ele('length').txt(blankIfZero(length)).up();
     goodslines.ele('width').txt(blankIfZero(width)).up();
     goodslines.ele('height').txt(blankIfZero(height)).up();

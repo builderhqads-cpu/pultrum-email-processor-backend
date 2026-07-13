@@ -126,6 +126,24 @@ export function blankIfZero(value: string | null | undefined): string {
   return formatNumber(n);
 }
 
+/**
+ * Preserve already-normalized decimal strings (e.g. "16.333", "133.280")
+ * produced by backend calculations. This avoids re-parsing them with the
+ * locale heuristics that would otherwise interpret a single dot + 3 digits as
+ * a thousands separator ("16.333" -> 16333).
+ *
+ * Use this only for values we already control/normalize internally.
+ */
+export function blankIfZeroPreservingDecimalString(
+  value: string | null | undefined,
+): string {
+  const v = (value ?? '').toString().trim();
+  if (!v) return '';
+  if (/^-?0+(?:\.0+)?$/.test(v)) return '';
+  if (/^-?\d+\.\d{1,3}$/.test(v)) return v;
+  return blankIfZero(v);
+}
+
 /** Drop a name that merely echoes the city (AI substituting an empty field). */
 export function dropNameIfCity(
   name: string | null | undefined,
