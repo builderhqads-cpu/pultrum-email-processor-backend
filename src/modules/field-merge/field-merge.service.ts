@@ -7,6 +7,7 @@ export type FieldSource =
   | 'ATTACHMENT'
   | 'OCR'
   | 'AI'
+  | 'CUSTOMER_PROFILE'
   | 'GENERATED'
   | 'CALCULATED';
 
@@ -41,6 +42,7 @@ const sourcePriority: Record<FieldSource, number> = {
   GENERATED: 100,
   CALCULATED: 90,
   EMAIL: 80,
+  CUSTOMER_PROFILE: 75,
   ATTACHMENT: 70,
   OCR: 60,
   REGEX: 50,

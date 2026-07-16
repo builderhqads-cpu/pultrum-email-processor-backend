@@ -8,6 +8,7 @@ import {
   Department,
   EmailLinkMethod,
   EmailStatus,
+  OrderFieldSource,
   OrderStatus,
   OrderType,
   TransportOrder,
@@ -121,6 +122,57 @@ export class EmailProcessingProcessor extends WorkerHost {
     return merged;
   }
 
+  private profileFieldLabel(key: string) {
+    return (
+      TRANSPORT_BOOKING_FIELD_RULES.find((rule) => rule.key === key)?.label ??
+      key
+    );
+  }
+
+  private toProfileDetectedFields(profileFields: Record<string, string>) {
+    return Object.entries(profileFields ?? {})
+      .map(([key, value]) => {
+        const cleaned = sanitizeExtractedValue(value ?? '');
+        if (!key || !cleaned) return null;
+        return {
+          key,
+          label: this.profileFieldLabel(key),
+          value: cleaned,
+          confidence: 0.99,
+        };
+      })
+      .filter((field): field is NonNullable<typeof field> => Boolean(field));
+  }
+
+  private buildProfileFieldMeta(
+    profileFields: Record<string, string>,
+    fieldValues?: Record<string, unknown>,
+  ) {
+    const fieldMetaByKey: Record<
+      string,
+      { confidence?: number | null; source?: OrderFieldSource }
+    > = {};
+
+    for (const [key, value] of Object.entries(profileFields ?? {})) {
+      const cleanedProfileValue = sanitizeExtractedValue(value ?? '');
+      if (!key || !cleanedProfileValue) continue;
+
+      if (fieldValues) {
+        const finalValue = sanitizeExtractedValue(
+          fieldValues[key] == null ? '' : String(fieldValues[key]),
+        );
+        if (!finalValue || finalValue !== cleanedProfileValue) continue;
+      }
+
+      fieldMetaByKey[key] = {
+        confidence: 0.99,
+        source: OrderFieldSource.CUSTOMER_PROFILE,
+      };
+    }
+
+    return fieldMetaByKey;
+  }
+
   private async resolveZipcodeEnrichment(params: {
     combinedText?: string | null;
     emailSubject?: string | null;
@@ -196,6 +248,10 @@ export class EmailProcessingProcessor extends WorkerHost {
               emailSubject: params.emailSubject,
               fieldValues: enrichedDeterministicFieldValues,
               source: 'email',
+              fieldMetaByKey: this.buildProfileFieldMeta(
+                params.presetFields,
+                enrichedDeterministicFieldValues,
+              ),
             },
             { enqueueJobs: false },
           )
@@ -239,7 +295,10 @@ export class EmailProcessingProcessor extends WorkerHost {
         baseValidation.detectedFields.filter(
           (f) => f?.key && !this.aiExcludeKeys.has(f.key),
         ),
-        zipcodeHints,
+        [
+          ...this.toProfileDetectedFields(params.presetFields),
+          ...zipcodeHints,
+        ],
       ),
       missingFields: baseValidation.missingFields,
       department: params.department,
@@ -273,15 +332,19 @@ export class EmailProcessingProcessor extends WorkerHost {
       // Route "deliver/load until X" times to the *_time_till slot.
       const routed = routeTimeBounds(merged, params.text);
       await this.transportBookingValidationService.validateOrderFromFieldValues(
-        {
-          orderId: params.orderId,
-          emailMessageId: params.emailMessageId,
-          emailSubject: params.emailSubject,
-          fieldValues: routed,
-          source: 'ai',
-        },
-        { enqueueJobs: params.enqueueJobs },
-      );
+          {
+            orderId: params.orderId,
+            emailMessageId: params.emailMessageId,
+            emailSubject: params.emailSubject,
+            fieldValues: routed,
+            source: 'ai',
+            fieldMetaByKey: this.buildProfileFieldMeta(
+              params.presetFields,
+              routed,
+            ),
+          },
+          { enqueueJobs: params.enqueueJobs },
+        );
     } else if (params.enqueueJobs) {
       await this.transportBookingValidationService.enqueueJobsForOrder({
         orderId: params.orderId,
@@ -331,12 +394,24 @@ export class EmailProcessingProcessor extends WorkerHost {
         extractedText: attachment.extractedText ?? null,
       })),
     });
+    const clientProfile = this.clientProfileService.resolve({
+      fromEmail: email.fromEmail,
+      bodyText: email.bodyText ?? null,
+      text: combinedText,
+    });
+    const profileFields = clientProfile
+      ? this.clientProfileService.derive(clientProfile, combinedText)
+      : {};
     const preDetectedZipcodes = await this.resolveZipcodeEnrichment({
       combinedText,
       emailSubject: email.subject,
+      fieldValues: profileFields,
     });
     const analysis = await this.aiExtractionService.analyzeEmail(eml, {
-      detectedFields: preDetectedZipcodes,
+      detectedFields: [
+        ...this.toProfileDetectedFields(profileFields),
+        ...preDetectedZipcodes,
+      ],
     });
     if (!analysis) {
       throw new Error(`AI analysis returned null for emailMessageId=${email.id}`);
@@ -455,10 +530,14 @@ export class EmailProcessingProcessor extends WorkerHost {
           orderId = order.id;
         }
 
+        const profileMergedFields = this.mergeMissingFieldValues(
+          o.fields,
+          this.toProfileDetectedFields(profileFields),
+        );
         const preMergedFields =
           analysis.orders.length === 1
-            ? this.mergeMissingFieldValues(o.fields, preDetectedZipcodes)
-            : o.fields;
+            ? this.mergeMissingFieldValues(profileMergedFields, preDetectedZipcodes)
+            : profileMergedFields;
         const orderZipcodeHints = await this.resolveZipcodeEnrichment({
           fieldValues: preMergedFields,
         });
@@ -474,6 +553,7 @@ export class EmailProcessingProcessor extends WorkerHost {
             emailSubject: email.subject ?? '',
             fieldValues: finalFields,
             source: 'ai',
+            fieldMetaByKey: this.buildProfileFieldMeta(profileFields, finalFields),
           },
           { enqueueJobs },
         );
@@ -490,7 +570,13 @@ export class EmailProcessingProcessor extends WorkerHost {
                   emlBase64: emlPreview,
                   emailSubject: email.subject,
                   emailMessageId: email.id,
-                  detectedFields: preDetectedZipcodes,
+                  detectedFields: [
+                    ...this.toProfileDetectedFields(profileFields),
+                    ...preDetectedZipcodes,
+                  ],
+                  clientProfile: clientProfile
+                    ? this.clientProfileService.payloadSummary(clientProfile)
+                    : null,
                 },
               } as any,
               responseJson: (analysis.rawResponse ?? analysis) as any,
@@ -796,6 +882,10 @@ export class EmailProcessingProcessor extends WorkerHost {
         emailSubject: params.emailSubject,
         fieldValues: routeTimeBounds(fieldValues, params.combinedText),
         source: 'email',
+        fieldMetaByKey: this.buildProfileFieldMeta(
+          params.profileFields,
+          fieldValues,
+        ),
       },
       { enqueueJobs: true },
     );
@@ -1096,7 +1186,7 @@ export class EmailProcessingProcessor extends WorkerHost {
     const fieldValues: Record<string, unknown> = {};
     const fieldMetaByKey: Record<
       string,
-      { confidence?: number | null; source?: MergeableField['source'] }
+      { confidence?: number | null; source?: OrderFieldSource }
     > = {};
 
     for (const field of merged) {
@@ -1105,7 +1195,7 @@ export class EmailProcessingProcessor extends WorkerHost {
       fieldValues[field.key] = value;
       fieldMetaByKey[field.key] = {
         confidence: field.confidence,
-        source: field.source,
+        source: field.source as OrderFieldSource,
       };
     }
 
@@ -1873,6 +1963,10 @@ export class EmailProcessingProcessor extends WorkerHost {
                   deterministic.detectedFields,
                 ),
                 source: 'email',
+                fieldMetaByKey: this.buildProfileFieldMeta(
+                  profileFields,
+                  supplementalFields,
+                ),
               },
               { enqueueJobs: false },
             )
@@ -1913,7 +2007,10 @@ export class EmailProcessingProcessor extends WorkerHost {
             baseValidation.detectedFields.filter(
               (f) => f?.key && !this.aiExcludeKeys.has(f.key),
             ),
-            zipcodeHints,
+            [
+              ...this.toProfileDetectedFields(profileFields),
+              ...zipcodeHints,
+            ],
           ),
           missingFields: baseValidation.missingFields,
           department: order.department ?? null,
@@ -1967,6 +2064,10 @@ export class EmailProcessingProcessor extends WorkerHost {
               emailSubject: emailForValidation.subject ?? '',
               fieldValues: routedFields,
               source: 'ai',
+              fieldMetaByKey: this.buildProfileFieldMeta(
+                supplementalFields,
+                routedFields,
+              ),
             },
             { enqueueJobs: true },
           );

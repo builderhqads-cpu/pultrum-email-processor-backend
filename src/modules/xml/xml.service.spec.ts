@@ -150,6 +150,7 @@ describe('XmlService generateOrderXml normalization', () => {
             { key: 'invoice_reference', value: 'INV-2026-1507' },
             { key: 'pickup_reference', value: 'PU-2026-1507' },
             { key: 'pickup_date', value: '2026-07-15' },
+            { key: 'pickup_date_till', value: '2026-07-16' },
             { key: 'pickup_time', value: '08:30' },
             { key: 'pickup_name', value: 'Amsterdam Timber Logistics B.V.' },
             { key: 'pickup_address', value: 'Herengracht 182' },
@@ -198,6 +199,7 @@ describe('XmlService generateOrderXml normalization', () => {
     const xml = await service.generateOrderXml('order-1');
 
     expect(xml).toContain('<address1>Industriestraße 45</address1>');
+    expect(xml).toContain('<datetill>2026-07-16</datetill>');
     expect(xml).toContain('<loadingmeter>96.000</loadingmeter>');
     expect(xml).toContain('<volume>737.280</volume>');
 

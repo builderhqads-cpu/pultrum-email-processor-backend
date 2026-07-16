@@ -541,6 +541,7 @@ export class XmlService {
     const pickupRemarks = this.getFieldValue(fieldMap, 'pickup_remarks');
     const deliveryRemarks = this.getFieldValue(fieldMap, 'delivery_remarks');
 
+    const pickupDateTill = this.getFieldValue(fieldMap, 'pickup_date_till');
     const pickupTimeTill = this.getFieldValue(fieldMap, 'pickup_time_till');
     const deliveryTimeTill = this.getFieldValue(fieldMap, 'delivery_time_till');
 
@@ -600,6 +601,7 @@ export class XmlService {
     const pickup = doc.ele('pickupaddress');
     pickup.ele('reference').txt(pickupRef).up();
     pickup.ele('date').txt(this.getFieldValue(fieldMap, 'pickup_date')).up();
+    pickup.ele('datetill').txt(pickupDateTill).up();
     pickup.ele('time').txt(this.getFieldValue(fieldMap, 'pickup_time')).up();
     pickup.ele('timetill').txt(pickupTimeTill).up();
     pickup

@@ -5,9 +5,10 @@ import {
 } from './transport-booking-validation.service';
 
 /**
- * Regression test for the customer-reply case where pickup_time_till,
- * delivery_time_till and product_description were supplied in the reply but
- * dropped because the curated labelToKeys map had no entry for them.
+ * Regression test for the customer-reply case where pickup_date_till,
+ * pickup_time_till, delivery_time_till and product_description were supplied
+ * in the reply but dropped because the curated labelToKeys map had no entry
+ * for them.
  *
  * It proves the two halves of the lookup line up:
  *   labelToKeys[ extractLabeledFields(reply) -> label ] -> the right key
@@ -23,6 +24,7 @@ describe('customer reply — recommended labels', () => {
     'Invoice reference: 1234567890',
     '',
     'Additionally, here is the extra information that may be useful:',
+    'Pickup date till: 2026-07-02',
     'Pickup time: 10:00',
     'Pickup time till: 10:30',
     'Pickup contact: John Hansen',
@@ -39,7 +41,8 @@ describe('customer reply — recommended labels', () => {
 
   const extracted = extractLabeledFields(reply);
 
-  it('extracts the three previously-dropped labels with correct values', () => {
+  it('extracts the previously-dropped labels with correct values', () => {
+    expect(extracted.get(normalizeLabel('Pickup date till'))).toBe('2026-07-02');
     expect(extracted.get(normalizeLabel('Pickup time till'))).toBe('10:30');
     expect(extracted.get(normalizeLabel('Delivery time till'))).toBe('12:30');
     expect(extracted.get(normalizeLabel('Product description'))).toBe(
@@ -53,6 +56,7 @@ describe('customer reply — recommended labels', () => {
 
   it('normalized labels match the keys added to labelToKeys', () => {
     // These must equal exactly the normalizeLabel(...) keys added to the map.
+    expect(normalizeLabel('Pickup date till')).toBe('pickup date till');
     expect(normalizeLabel('Pickup time till')).toBe('pickup time till');
     expect(normalizeLabel('Delivery time till')).toBe('delivery time till');
     expect(normalizeLabel('Product description')).toBe('product description');

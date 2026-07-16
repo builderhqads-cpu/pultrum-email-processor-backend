@@ -18,6 +18,12 @@ export class OrdersController {
     return this.ordersService.findOne(id);
   }
 
+  @Get(':id/xml-preview')
+  @UseGuards(JwtAuthGuard)
+  previewXml(@Param('id') id: string) {
+    return this.ordersService.previewXml(id);
+  }
+
   @Get(':id/reply-draft')
   @UseGuards(JwtAuthGuard)
   getReplyDraft(@Param('id') id: string) {

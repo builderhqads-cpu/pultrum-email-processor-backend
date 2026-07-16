@@ -86,6 +86,21 @@ export const TRANSPORT_BOOKING_FIELD_RULES: TransportBookingFieldRule[] = [
     ],
   },
   {
+    key: 'pickup_date_till',
+    label: 'Pickup date till',
+    xmlPath: 'transportbooking.shipments.shipment.pickupaddress.datetill',
+    requirement: RECOMMENDED,
+    aliases: [
+      'pickup date till',
+      'pickup date to',
+      'pickup until date',
+      'loading date till',
+      'loading date to',
+      'collection date till',
+      'laaddatum tot',
+    ],
+  },
+  {
     key: 'pickup_time',
     label: 'Pickup time',
     xmlPath: 'transportbooking.shipments.shipment.pickupaddress.time',

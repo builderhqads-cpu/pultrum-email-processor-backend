@@ -13,6 +13,7 @@ import {
   CustomerReplyDraftStatus,
   Department,
   FieldRequirement,
+  OrderFieldSource,
   OrderStatus,
 } from '@prisma/client';
 import { ClientProfileService } from '../client-profiles/client-profile.service';
@@ -67,6 +68,33 @@ export class OrdersService {
     const safeOrderId = orderId.replace(/[^a-zA-Z0-9_-]/g, '_');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     return `${timestamp}_${safeOrderId}.xml`;
+  }
+
+  private buildProfileFieldMeta(
+    profileFields: Record<string, string>,
+    fieldValues?: Record<string, unknown>,
+  ) {
+    const fieldMetaByKey: Record<
+      string,
+      { confidence?: number | null; source?: OrderFieldSource }
+    > = {};
+
+    for (const [key, value] of Object.entries(profileFields ?? {})) {
+      const cleanedProfileValue = (value ?? '').toString().trim();
+      if (!key || !cleanedProfileValue) continue;
+
+      if (fieldValues) {
+        const finalValue = (fieldValues[key] ?? '').toString().trim();
+        if (!finalValue || finalValue !== cleanedProfileValue) continue;
+      }
+
+      fieldMetaByKey[key] = {
+        confidence: 0.99,
+        source: OrderFieldSource.CUSTOMER_PROFILE,
+      };
+    }
+
+    return fieldMetaByKey;
   }
 
   /** Generates the Creative Gears XML on demand (read-only) for preview. */
@@ -713,6 +741,7 @@ export class OrdersService {
         emailSubject: order.emailMessage?.subject ?? '',
         fieldValues: routeTimeBounds(merged, text),
         source: 'ai',
+        fieldMetaByKey: this.buildProfileFieldMeta(presetFields, merged),
       },
       { enqueueJobs: false },
     );

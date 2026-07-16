@@ -644,6 +644,9 @@ export class TransportBookingValidationService {
       [normalizeLabel('Laad telefoonnummer')]: ['pickup_phone'],
       [normalizeLabel('Laad e-mailadres')]: ['pickup_email'],
       [normalizeLabel('Pickup date')]: ['pickup_date'],
+      [normalizeLabel('Pickup date till')]: ['pickup_date_till'],
+      [normalizeLabel('Pickup date to')]: ['pickup_date_till'],
+      [normalizeLabel('Laaddatum tot')]: ['pickup_date_till'],
       [normalizeLabel('Pickup time')]: ['pickup_time'],
       [normalizeLabel('Pickup reference')]: ['pickup_reference'],
       [normalizeLabel('Pickup name')]: ['pickup_name'],
@@ -749,8 +752,11 @@ export class TransportBookingValidationService {
       ],
       [normalizeLabel('Price')]: ['price'],
 
-      // Recommended "till" times + product description (commonly supplied in
-      // customer replies; were missing from the curated map above).
+      // Recommended "till" dates/times + product description (commonly
+      // supplied in customer replies; were missing from the curated map above).
+      [normalizeLabel('Pickup date till')]: ['pickup_date_till'],
+      [normalizeLabel('Pickup date to')]: ['pickup_date_till'],
+      [normalizeLabel('Laaddatum tot')]: ['pickup_date_till'],
       [normalizeLabel('Pickup time till')]: ['pickup_time_till'],
       [normalizeLabel('Pickup time to')]: ['pickup_time_till'],
       [normalizeLabel('Laadtijd tot')]: ['pickup_time_till'],
