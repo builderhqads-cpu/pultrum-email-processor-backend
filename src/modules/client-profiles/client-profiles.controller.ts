@@ -14,6 +14,7 @@ import { ClientProfileService } from './client-profile.service';
 type CustomerProfilePayload = {
   name?: unknown;
   contactEmail?: unknown;
+  additionalContactEmails?: unknown;
   active?: unknown;
   notes?: unknown;
   fields?: unknown;

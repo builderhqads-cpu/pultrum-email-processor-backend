@@ -29,6 +29,7 @@ type CustomerProfileFieldInput = {
 type CustomerProfileMutationInput = {
   name: string;
   contactEmail: string;
+  additionalContactEmails: string[];
   active: boolean;
   notes: string | null;
   fields: CustomerProfileFieldInput[];
@@ -40,6 +41,7 @@ type CustomerProfileRecord = Awaited<
 
 const normalizeEmail = (value: string) => value.trim().toLowerCase();
 const normalizeValue = (value: string) => value.trim();
+const EMAIL_FORMAT_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function fieldGroup(key: string) {
   if (key.startsWith('pickup_')) return 'pickup';
@@ -118,17 +120,20 @@ export class ClientProfileService implements OnModuleInit {
       where: { active: true },
       orderBy: { createdAt: 'asc' },
       include: {
+        emails: {
+          orderBy: { email: 'asc' },
+        },
         fields: {
           orderBy: { key: 'asc' },
         },
       },
     });
 
-    this.databaseProfiles = profiles.map((profile) => ({
+      this.databaseProfiles = profiles.map((profile) => ({
       id: profile.id,
       name: profile.name,
       match: {
-        emails: [profile.contactEmail],
+        emails: [profile.contactEmail, ...profile.emails.map((entry) => entry.email)],
       },
       fixedFields: toFieldMap(profile.fields),
       notes: profile.notes ?? undefined,
@@ -272,6 +277,9 @@ export class ClientProfileService implements OnModuleInit {
     const profiles = await this.prismaService!.customerProfile.findMany({
       orderBy: { createdAt: 'asc' },
       include: {
+        emails: {
+          orderBy: { email: 'asc' },
+        },
         fields: {
           orderBy: { key: 'asc' },
         },
@@ -291,16 +299,10 @@ export class ClientProfileService implements OnModuleInit {
 
   async createCustomerProfile(input: CustomerProfileMutationInput) {
     this.requirePrisma();
-
-    const existing = await this.prismaService!.customerProfile.findUnique({
-      where: { contactEmail: input.contactEmail },
-      select: { id: true },
-    });
-    if (existing) {
-      throw new BadRequestException(
-        'A customer profile with this contact email already exists.',
-      );
-    }
+    await this.assertEmailsAvailable(
+      [input.contactEmail, ...input.additionalContactEmails],
+      null,
+    );
 
     const profile = await this.prismaService!.$transaction(async (tx) => {
       const created = await tx.customerProfile.create({
@@ -311,6 +313,15 @@ export class ClientProfileService implements OnModuleInit {
           notes: input.notes,
         },
       });
+
+      if (input.additionalContactEmails.length) {
+        await tx.customerProfileEmail.createMany({
+          data: input.additionalContactEmails.map((email) => ({
+            profileId: created.id,
+            email,
+          })),
+        });
+      }
 
       if (input.fields.length) {
         await tx.customerProfileField.createMany({
@@ -325,6 +336,9 @@ export class ClientProfileService implements OnModuleInit {
       return tx.customerProfile.findUnique({
         where: { id: created.id },
         include: {
+          emails: {
+            orderBy: { email: 'asc' },
+          },
           fields: {
             orderBy: { key: 'asc' },
           },
@@ -351,20 +365,19 @@ export class ClientProfileService implements OnModuleInit {
       throw new NotFoundException(`Customer profile not found: id=${id}`);
     }
 
-    if (
-      input.contactEmail &&
-      input.contactEmail !== existing.contactEmail
-    ) {
-      const conflict = await this.prismaService!.customerProfile.findUnique({
-        where: { contactEmail: input.contactEmail },
-        select: { id: true },
-      });
-      if (conflict && conflict.id !== id) {
-        throw new BadRequestException(
-          'A customer profile with this contact email already exists.',
-        );
-      }
-    }
+    const nextPrimaryEmail = input.contactEmail ?? existing.contactEmail;
+    const nextAdditionalEmails = [
+      ...new Set(
+        (input.additionalContactEmails ?? existing.emails.map((entry) => entry.email)).filter(
+          (email) => email !== nextPrimaryEmail,
+        ),
+      ),
+    ];
+
+    await this.assertEmailsAvailable(
+      [nextPrimaryEmail, ...nextAdditionalEmails],
+      id,
+    );
 
     const profile = await this.prismaService!.$transaction(async (tx) => {
       await tx.customerProfile.update({
@@ -378,6 +391,21 @@ export class ClientProfileService implements OnModuleInit {
           ...(input.notes !== undefined ? { notes: input.notes } : {}),
         },
       });
+
+      if (input.additionalContactEmails !== undefined) {
+        await tx.customerProfileEmail.deleteMany({
+          where: { profileId: id },
+        });
+
+        if (nextAdditionalEmails.length) {
+          await tx.customerProfileEmail.createMany({
+            data: nextAdditionalEmails.map((email) => ({
+              profileId: id,
+              email,
+            })),
+          });
+        }
+      }
 
       if (input.fields !== undefined) {
         await tx.customerProfileField.deleteMany({
@@ -398,6 +426,9 @@ export class ClientProfileService implements OnModuleInit {
       return tx.customerProfile.findUnique({
         where: { id },
         include: {
+          emails: {
+            orderBy: { email: 'asc' },
+          },
           fields: {
             orderBy: { key: 'asc' },
           },
@@ -440,6 +471,9 @@ export class ClientProfileService implements OnModuleInit {
     return this.prismaService!.customerProfile.findUnique({
       where: { id },
       include: {
+        emails: {
+          orderBy: { email: 'asc' },
+        },
         fields: {
           orderBy: { key: 'asc' },
         },
@@ -456,6 +490,8 @@ export class ClientProfileService implements OnModuleInit {
       id: profile.id,
       name: profile.name,
       contactEmail: profile.contactEmail,
+      additionalContactEmails: profile.emails.map((entry) => entry.email),
+      contactEmails: [profile.contactEmail, ...profile.emails.map((entry) => entry.email)],
       active: profile.active,
       notes: profile.notes,
       createdAt: profile.createdAt,
@@ -483,6 +519,7 @@ export class ClientProfileService implements OnModuleInit {
   normalizeMutationInput(input: {
     name?: unknown;
     contactEmail?: unknown;
+    additionalContactEmails?: unknown;
     active?: unknown;
     notes?: unknown;
     fields?: unknown;
@@ -500,12 +537,17 @@ export class ClientProfileService implements OnModuleInit {
     }
 
     const contactEmail = normalizeEmail(input.contactEmail);
-    const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail);
+    const isValidEmail = EMAIL_FORMAT_RE.test(contactEmail);
     if (!isValidEmail) {
       throw new BadRequestException(
         'Customer profile contact email is invalid.',
       );
     }
+
+    const additionalContactEmails = this.normalizeAdditionalContactEmails(
+      input.additionalContactEmails,
+      contactEmail,
+    );
 
     if (input.active !== undefined && typeof input.active !== 'boolean') {
       throw new BadRequestException(
@@ -537,6 +579,7 @@ export class ClientProfileService implements OnModuleInit {
     return {
       name: input.name.trim(),
       contactEmail,
+      additionalContactEmails,
       active,
       notes,
       fields: [...unique.entries()].map(([key, value]) => ({ key, value })),
@@ -546,6 +589,7 @@ export class ClientProfileService implements OnModuleInit {
   normalizePartialMutationInput(input: {
     name?: unknown;
     contactEmail?: unknown;
+    additionalContactEmails?: unknown;
     active?: unknown;
     notes?: unknown;
     fields?: unknown;
@@ -569,13 +613,20 @@ export class ClientProfileService implements OnModuleInit {
         );
       }
       const contactEmail = normalizeEmail(input.contactEmail);
-      const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail);
+      const isValidEmail = EMAIL_FORMAT_RE.test(contactEmail);
       if (!isValidEmail) {
         throw new BadRequestException(
           'Customer profile contact email is invalid.',
         );
       }
       out.contactEmail = contactEmail;
+    }
+
+    if (input.additionalContactEmails !== undefined) {
+      out.additionalContactEmails = this.normalizeAdditionalContactEmails(
+        input.additionalContactEmails,
+        typeof out.contactEmail === 'string' ? out.contactEmail : undefined,
+      );
     }
 
     if (input.active !== undefined) {
@@ -628,5 +679,76 @@ export class ClientProfileService implements OnModuleInit {
     }
 
     return out;
+  }
+
+  private normalizeAdditionalContactEmails(
+    rawValue: unknown,
+    primaryEmail?: string,
+  ) {
+    if (rawValue === undefined) return [];
+    if (!Array.isArray(rawValue)) {
+      throw new BadRequestException(
+        'Customer profile additional contact emails must be an array.',
+      );
+    }
+
+    const normalized = new Set<string>();
+    for (const entry of rawValue) {
+      if (typeof entry !== 'string' || !entry.trim()) {
+        throw new BadRequestException(
+          'Customer profile additional contact emails are invalid.',
+        );
+      }
+      const email = normalizeEmail(entry);
+      if (!EMAIL_FORMAT_RE.test(email)) {
+        throw new BadRequestException(
+          `Customer profile additional contact email is invalid: ${entry}`,
+        );
+      }
+      if (primaryEmail && email === primaryEmail) {
+        continue;
+      }
+      normalized.add(email);
+    }
+
+    return [...normalized.values()];
+  }
+
+  private async assertEmailsAvailable(
+    emails: string[],
+    excludeProfileId: string | null,
+  ) {
+    const uniqueEmails = [...new Set(emails.map(normalizeEmail).filter(Boolean))];
+    if (!uniqueEmails.length) {
+      throw new BadRequestException(
+        'At least one customer profile email is required.',
+      );
+    }
+
+    const primaryConflicts = await this.prismaService!.customerProfile.findMany({
+      where: {
+        contactEmail: { in: uniqueEmails },
+        ...(excludeProfileId ? { id: { not: excludeProfileId } } : {}),
+      },
+      select: { id: true, contactEmail: true },
+    });
+    if (primaryConflicts.length) {
+      throw new BadRequestException(
+        `A customer profile with this contact email already exists: ${primaryConflicts[0]!.contactEmail}`,
+      );
+    }
+
+    const additionalConflicts = await this.prismaService!.customerProfileEmail.findMany({
+      where: {
+        email: { in: uniqueEmails },
+        ...(excludeProfileId ? { profileId: { not: excludeProfileId } } : {}),
+      },
+      select: { profileId: true, email: true },
+    });
+    if (additionalConflicts.length) {
+      throw new BadRequestException(
+        `A customer profile with this contact email already exists: ${additionalConflicts[0]!.email}`,
+      );
+    }
   }
 }
