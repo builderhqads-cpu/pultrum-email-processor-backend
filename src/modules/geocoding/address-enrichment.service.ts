@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { RegexExtractionService } from '../regex-extraction/regex-extraction.service';
 import { TransportBookingValidationService } from '../transport-booking-validation/transport-booking-validation.service';
 import { splitStreetAddress } from '../../utils/field-normalize';
@@ -170,7 +171,26 @@ export class AddressEnrichmentService {
     private readonly googleGeocodingService: GoogleGeocodingService,
     private readonly regexExtractionService: RegexExtractionService,
     private readonly transportBookingValidationService: TransportBookingValidationService,
+    // Last on purpose: any positional construction keeps working, and the
+    // optional read below falls back to the SAFE default (reject partials).
+    private readonly configService?: ConfigService,
   ) {}
+
+  /**
+   * Google sets `partial_match` when it could NOT match the address exactly —
+   * typically the house number/street wasn't found and it fell back to the
+   * locality, returning the postal code of the city centre. Accepting that
+   * would put a plausible-but-wrong zipcode on the order (wrong delivery).
+   * Default: reject. Set GEOCODING_ALLOW_PARTIAL_MATCH=true to opt back in.
+   */
+  private get allowPartialMatch(): boolean {
+    const raw = (
+      this.configService?.get<string>('GEOCODING_ALLOW_PARTIAL_MATCH') ?? ''
+    )
+      .trim()
+      .toLowerCase();
+    return ['1', 'true', 'yes', 'y', 'on'].includes(raw);
+  }
 
   private countryKey(raw: string) {
     return raw
@@ -320,6 +340,18 @@ export class AddressEnrichmentService {
         city,
         country,
       });
+
+      // Never take a zipcode from an inexact match — better to leave it missing
+      // and ask the customer than to ship to the wrong postal code.
+      if (geocoded?.partialMatch && !this.allowPartialMatch) {
+        this.logger.warn(
+          `Skipping ${side} zipcode (Google PARTIAL match) for ${[address, city, country].filter(Boolean).join(', ')}` +
+            (geocoded.formattedAddress
+              ? ` -> matched '${geocoded.formattedAddress}'`
+              : ''),
+        );
+        continue;
+      }
 
       const zipcode = sanitizeExtractedValue(geocoded?.zipcode ?? '');
       if (!zipcode) {
