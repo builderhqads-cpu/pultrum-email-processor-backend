@@ -79,6 +79,8 @@ export type AiEmailAnalysis = {
   orders: AiOrderResult[];
   /** The full raw response from the route (for the AI requests panel). */
   rawResponse?: any;
+  /** The exact body we POSTed (eml truncated), for the AI requests panel. */
+  requestPreview?: any;
 };
 
 export type AiExtractionResult = {
@@ -788,23 +790,27 @@ export class AiExtractionService {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
+      // Built ONCE and echoed back on the result, so the audit trail shows the
+      // exact body we sent instead of a hand-rebuilt copy that can drift.
+      const requestBody = {
+        emlBase64: eml,
+        ...(options?.detectedFields?.length
+          ? { detectedFields: options.detectedFields }
+          : {}),
+        // Customer-specific extraction guidance (how THIS client builds their
+        // documents). Only sent when the profile actually carries hints.
+        ...(options?.customerProfile?.instructions
+          ? { customerProfile: options.customerProfile }
+          : {}),
+      };
+
       const res = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
         },
-        body: JSON.stringify({
-          emlBase64: eml,
-          ...(options?.detectedFields?.length
-            ? { detectedFields: options.detectedFields }
-            : {}),
-          // Customer-specific extraction guidance (how THIS client builds their
-          // documents). Only sent when the profile actually carries hints.
-          ...(options?.customerProfile?.instructions
-            ? { customerProfile: options.customerProfile }
-            : {}),
-        }),
+        body: JSON.stringify(requestBody),
         signal: controller.signal,
       });
       clearTimeout(timeout);
@@ -824,7 +830,15 @@ export class AiExtractionService {
         );
         return null;
       }
-      return this.parseEmailAnalysis(raw);
+      const analysis = this.parseEmailAnalysis(raw);
+      if (analysis) {
+        // Keep the payload light: the full base64 would bloat the audit row.
+        analysis.requestPreview = {
+          ...requestBody,
+          emlBase64: `${String(eml).slice(0, 120)}…(${String(eml).length} bytes)`,
+        };
+      }
+      return analysis;
     } catch (err: any) {
       clearTimeout(timeout);
       this.logger.warn(`AI analysis request failed: ${err?.message ?? err}`);

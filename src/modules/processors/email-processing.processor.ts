@@ -580,18 +580,17 @@ export class EmailProcessingProcessor extends WorkerHost {
               orderId,
               payloadJson: {
                 route: 'eml-process',
+                // The body actually POSTed (echoed back by analyzeEmail), so the
+                // panel can never drift from what the AI really received.
                 request: {
-                  emlBase64: emlPreview,
+                  ...(analysis.requestPreview ?? { emlBase64: emlPreview }),
                   emailSubject: email.subject,
                   emailMessageId: email.id,
-                  detectedFields: [
-                    ...this.toProfileDetectedFields(profileFields),
-                    ...preDetectedZipcodes,
-                  ],
-                  clientProfile: clientProfile
-                    ? this.clientProfileService.payloadSummary(clientProfile)
-                    : null,
                 },
+                // Extra context that is NOT part of the request body.
+                clientProfile: clientProfile
+                  ? this.clientProfileService.payloadSummary(clientProfile)
+                  : null,
               } as any,
               responseJson: (analysis.rawResponse ?? analysis) as any,
               status: 'SUCCEEDED',
@@ -846,12 +845,14 @@ export class EmailProcessingProcessor extends WorkerHost {
           payloadJson: {
             route: 'eml-process',
             context: 'customer-reply',
+            // The body actually POSTed, echoed back by analyzeEmail.
             request: {
-              emlBase64: replyEml
-                ? `${String(replyEml).slice(0, 120)}…(${String(replyEml).length} bytes)`
-                : null,
+              ...(analysis.requestPreview ?? {
+                emlBase64: replyEml
+                  ? `${String(replyEml).slice(0, 120)}…(${String(replyEml).length} bytes)`
+                  : null,
+              }),
               replyEmailMessageId: replyEmailMessage.id,
-              detectedFields: preDetectedZipcodes,
             },
           } as any,
           responseJson: (analysis.rawResponse ?? analysis) as any,
