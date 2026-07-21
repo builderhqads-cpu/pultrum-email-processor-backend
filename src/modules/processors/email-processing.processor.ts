@@ -130,6 +130,27 @@ export class EmailProcessingProcessor extends WorkerHost {
     );
   }
 
+  /**
+   * Customer-profile fields are registered FACTS about the client, so they win
+   * over whatever the AI read from the email — an operator typed them once and
+   * they are not supposed to change per message. This is deliberately different
+   * from {@link mergeMissingFieldValues}, which only fills gaps and stays the
+   * rule for inferred values (geocoded zipcodes).
+   */
+  private applyProfileOverrides(
+    fieldValues: Record<string, unknown>,
+    profileFields: Record<string, string>,
+  ) {
+    const merged = { ...fieldValues };
+    for (const [key, raw] of Object.entries(profileFields ?? {})) {
+      const cleanedKey = (key ?? '').toString().trim();
+      const value = sanitizeExtractedValue(raw ?? '');
+      if (!cleanedKey || !value) continue;
+      merged[cleanedKey] = value;
+    }
+    return merged;
+  }
+
   private toProfileDetectedFields(profileFields: Record<string, string>) {
     return Object.entries(profileFields ?? {})
       .map(([key, value]) => {
@@ -546,9 +567,10 @@ export class EmailProcessingProcessor extends WorkerHost {
           orderId = order.id;
         }
 
-        const profileMergedFields = this.mergeMissingFieldValues(
+        // Registered customer defaults override the AI's reading of the email.
+        const profileMergedFields = this.applyProfileOverrides(
           o.fields,
-          this.toProfileDetectedFields(profileFields),
+          profileFields,
         );
         const preMergedFields =
           analysis.orders.length === 1
