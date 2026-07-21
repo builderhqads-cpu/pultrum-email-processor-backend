@@ -49,6 +49,7 @@ Prijs: 250
     const prismaService: any = {
       transportOrder: {
         findUnique: jest.fn().mockResolvedValue({ id: 'order-1' }),
+        findFirst: jest.fn().mockResolvedValue({ id: 'order-1' }),
         update: transportOrderUpdate,
       },
       missingField: {
@@ -66,6 +67,10 @@ Prijs: 250
             deleteMany: missingFieldDeleteMany,
             createMany: missingFieldCreateMany,
           },
+          validationWarning: {
+            deleteMany: jest.fn(async () => ({})),
+            createMany: jest.fn(async () => ({})),
+          },
           orderField: { upsert: orderFieldUpsert, deleteMany: orderFieldDeleteMany },
         }),
     };
@@ -82,7 +87,9 @@ Prijs: 250
       configService,
       aiRequestQueue,
       xmlDeliveryQueue,
-      { shouldAutoDeliver: async () => false } as any,
+      // This test asserts the XML job IS enqueued for a complete order, so the
+      // operation mode must allow auto-delivery.
+      { shouldAutoDeliver: async () => true } as any,
     );
 
     const email: any = {

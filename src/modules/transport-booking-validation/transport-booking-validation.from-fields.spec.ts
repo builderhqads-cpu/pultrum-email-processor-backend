@@ -28,6 +28,10 @@ describe('TransportBookingValidationService.validateOrderFromFieldValues', () =>
             deleteMany: missingFieldDeleteMany,
             createMany: missingFieldCreateMany,
           },
+          validationWarning: {
+            deleteMany: jest.fn(async () => ({})),
+            createMany: jest.fn(async () => ({})),
+          },
           orderField: {
             upsert: orderFieldUpsert,
             deleteMany: orderFieldDeleteMany,
@@ -47,7 +51,9 @@ describe('TransportBookingValidationService.validateOrderFromFieldValues', () =>
       configService,
       aiRequestQueue,
       xmlDeliveryQueue,
-      { shouldAutoDeliver: async () => false } as any,
+      // This test asserts the XML job IS enqueued for a complete order, so the
+      // operation mode must allow auto-delivery.
+      { shouldAutoDeliver: async () => true } as any,
     );
 
     const res = await service.validateOrderFromFieldValues(
@@ -133,6 +139,10 @@ describe('TransportBookingValidationService.validateOrderFromFieldValues', () =>
           missingField: {
             deleteMany: missingFieldDeleteMany,
             createMany: missingFieldCreateMany,
+          },
+          validationWarning: {
+            deleteMany: jest.fn(async () => ({})),
+            createMany: jest.fn(async () => ({})),
           },
           orderField: {
             upsert: orderFieldUpsert,

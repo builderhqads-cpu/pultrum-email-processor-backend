@@ -17,6 +17,7 @@ describe('AiExtractionService', () => {
       configService,
       {} as any,
       { log: jest.fn() } as any,
+      { resolveZipcodeHints: jest.fn(async () => []) } as any,
     );
 
     const res = await service.extract({
@@ -63,6 +64,7 @@ describe('AiExtractionService', () => {
       configService,
       {} as any,
       { log: jest.fn() } as any,
+      { resolveZipcodeHints: jest.fn(async () => []) } as any,
     );
 
     const res = await service.extract({
@@ -113,6 +115,7 @@ describe('AiExtractionService', () => {
       configService,
       {} as any,
       { log: jest.fn() } as any,
+      { resolveZipcodeHints: jest.fn(async () => []) } as any,
     );
 
     const res = await service.extract({
@@ -157,6 +160,7 @@ describe('AiExtractionService', () => {
       configService,
       {} as any,
       { log: jest.fn() } as any,
+      { resolveZipcodeHints: jest.fn(async () => []) } as any,
     );
 
     const res = await service.extract({
@@ -206,6 +210,7 @@ describe('AiExtractionService', () => {
       configService,
       {} as any,
       { log: jest.fn() } as any,
+      { resolveZipcodeHints: jest.fn(async () => []) } as any,
     );
 
     const res = await service.extract({
@@ -274,6 +279,7 @@ describe('AiExtractionService', () => {
       configService,
       {} as any,
       { log: jest.fn() } as any,
+      { resolveZipcodeHints: jest.fn(async () => []) } as any,
     );
 
     const res = await service.extract({
@@ -332,6 +338,7 @@ describe('AiExtractionService', () => {
       configService,
       {} as any,
       { log: jest.fn() } as any,
+      { resolveZipcodeHints: jest.fn(async () => []) } as any,
     );
 
     const res = await service.extract({
@@ -386,6 +393,7 @@ describe('AiExtractionService', () => {
       configService,
       {} as any,
       { log: jest.fn() } as any,
+      { resolveZipcodeHints: jest.fn(async () => []) } as any,
     );
 
     const res = await service.extract({
@@ -492,6 +500,7 @@ describe('AiExtractionService', () => {
       configService,
       prismaService,
       auditLogService,
+      { resolveZipcodeHints: jest.fn(async () => []) } as any,
     );
 
     const res = await service.extractTransportOrder('order-1');

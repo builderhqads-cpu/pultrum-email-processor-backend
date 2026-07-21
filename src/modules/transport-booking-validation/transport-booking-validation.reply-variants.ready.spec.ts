@@ -7,9 +7,14 @@ describe('TransportBookingValidationService (reply variants)', () => {
     const prismaService: any = {
       transportOrder: {
         findUnique: jest.fn(async () => ({ id: 'order-1' })),
+        findFirst: jest.fn(async () => ({ id: 'order-1' })),
         update: transportOrderUpdate,
       },
       missingField: { deleteMany: jest.fn(async () => ({})), createMany: jest.fn(async () => ({})) },
+      validationWarning: {
+        deleteMany: jest.fn(async () => ({})),
+        createMany: jest.fn(async () => ({})),
+      },
       orderField: { upsert: jest.fn(async () => ({})), deleteMany: jest.fn(async () => ({})) },
       $transaction: jest.fn(async (fn: any) => fn(prismaService)),
     };

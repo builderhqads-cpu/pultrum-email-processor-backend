@@ -71,6 +71,7 @@ describe('EmailProcessingProcessor (reply linking)', () => {
       {
         generateConsolidatedMissingInfoReply: jest.fn(async () => null),
       } as any,
+      { resolveZipcodeHints: jest.fn(async () => []) } as any,
       { get: jest.fn(() => undefined) } as any,
     );
 
