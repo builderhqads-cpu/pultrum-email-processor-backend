@@ -19,6 +19,8 @@ export type ZipcodeEnrichmentHint = {
   label: string;
   value: string;
   confidence: number;
+  /** Looked up in an official address database — strong, but an inference. */
+  source: 'geocoding';
 };
 
 const RELEVANT_KEYS = new Set([
@@ -366,6 +368,7 @@ export class AddressEnrichmentService {
         label: this.labelFor(zipcodeKey),
         value: zipcode,
         confidence: 0.92,
+        source: 'geocoding',
       });
     }
 

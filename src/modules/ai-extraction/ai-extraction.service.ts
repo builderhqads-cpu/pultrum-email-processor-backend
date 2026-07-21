@@ -32,6 +32,8 @@ export type AiExtractionPayload = {
     label: string;
     value: string;
     confidence: number;
+    /** Where the value came from (customer_profile, geocoding, ...). */
+    source?: string;
   }>;
   missingFields: Array<{
     key: string;
@@ -45,11 +47,17 @@ export type AiExtractionPayload = {
   email?: string | null;
 };
 
+/**
+ * A value we already know before the AI reads the email. `source` tells the AI
+ * how much to trust it: `customer_profile` is a registered fact about the
+ * client, `geocoding` is an official-address lookup (strong, but an inference).
+ */
 export type AiPreDetectedField = {
   key: string;
   label: string;
   value: string;
   confidence: number;
+  source?: 'customer_profile' | 'geocoding' | (string & {});
 };
 
 /**
@@ -125,6 +133,7 @@ export class AiExtractionService {
         label: field.label,
         value,
         confidence: field.confidence,
+        ...(field.source ? { source: field.source } : {}),
       });
       seen.add(field.key);
     }

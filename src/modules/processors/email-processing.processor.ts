@@ -140,6 +140,8 @@ export class EmailProcessingProcessor extends WorkerHost {
           label: this.profileFieldLabel(key),
           value: cleaned,
           confidence: 0.99,
+          // Registered fact about this client, not something we inferred.
+          source: 'customer_profile' as const,
         };
       })
       .filter((field): field is NonNullable<typeof field> => Boolean(field));
