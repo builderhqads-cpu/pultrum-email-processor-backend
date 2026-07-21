@@ -52,6 +52,24 @@ export type AiPreDetectedField = {
   confidence: number;
 };
 
+/**
+ * A customer-specific hint telling the AI HOW to locate a field in THIS
+ * customer's documents (their layout conventions), e.g.
+ * pickup_reference -> "10-cijferig nummer dat TR bevat".
+ * It is guidance for the extraction, never a value.
+ */
+export type AiFieldInstruction = {
+  key: string;
+  label: string;
+  instruction: string;
+};
+
+/** Customer context forwarded to the extraction route. */
+export type AiCustomerProfileContext = {
+  name: string;
+  fieldInstructions: AiFieldInstruction[];
+};
+
 /** One order returned by the AI in the new "send-the-eml" flow. */
 export type AiOrderResult = {
   externalReference?: string | null;
@@ -748,7 +766,10 @@ export class AiExtractionService {
    */
   async analyzeEmail(
     eml: string | null | undefined,
-    options?: { detectedFields?: AiPreDetectedField[] },
+    options?: {
+      detectedFields?: AiPreDetectedField[];
+      customerProfile?: AiCustomerProfileContext | null;
+    },
   ): Promise<AiEmailAnalysis | null> {
     const url = this.resolveEmlProcessUrl();
     if (!url) {
@@ -783,6 +804,11 @@ export class AiExtractionService {
           emlBase64: eml,
           ...(options?.detectedFields?.length
             ? { detectedFields: options.detectedFields }
+            : {}),
+          // Customer-specific extraction guidance (how THIS client builds their
+          // documents). Only sent when the profile actually carries hints.
+          ...(options?.customerProfile?.fieldInstructions?.length
+            ? { customerProfile: options.customerProfile }
             : {}),
         }),
         signal: controller.signal,

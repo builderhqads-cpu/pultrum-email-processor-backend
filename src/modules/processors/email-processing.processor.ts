@@ -27,6 +27,7 @@ import { AiClassificationService } from '../ai-classification/ai-classification.
 import { TRANSPORT_BOOKING_FIELD_RULES } from '../required-fields/transport-booking-field-rules';
 import { TransportBookingValidationService } from '../transport-booking-validation/transport-booking-validation.service';
 import { ClientProfileService } from '../client-profiles/client-profile.service';
+import type { ClientProfile } from '../client-profiles/client-profile.types';
 import { OrderSplitService } from '../order-split/order-split.service';
 import { AiReplyService } from '../ai-reply/ai-reply.service';
 import { AddressEnrichmentService } from '../geocoding/address-enrichment.service';
@@ -142,6 +143,25 @@ export class EmailProcessingProcessor extends WorkerHost {
         };
       })
       .filter((field): field is NonNullable<typeof field> => Boolean(field));
+  }
+
+  /**
+   * Turn the resolved client profile into the extraction guidance we forward to
+   * the AI: per-field hints on how THIS customer builds their documents (e.g.
+   * "the pickup reference is the 10-digit number containing TR"). Returns null
+   * when the profile has no hints, so we don't send an empty object.
+   */
+  private toCustomerProfileContext(profile: ClientProfile | null) {
+    const instructions = Object.entries(profile?.fieldInstructions ?? {})
+      .map(([key, instruction]) => {
+        const cleaned = (instruction ?? '').toString().trim();
+        if (!key || !cleaned) return null;
+        return { key, label: this.profileFieldLabel(key), instruction: cleaned };
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+
+    if (!profile || instructions.length === 0) return null;
+    return { name: profile.name, fieldInstructions: instructions };
   }
 
   private buildProfileFieldMeta(
@@ -412,6 +432,7 @@ export class EmailProcessingProcessor extends WorkerHost {
         ...this.toProfileDetectedFields(profileFields),
         ...preDetectedZipcodes,
       ],
+      customerProfile: this.toCustomerProfileContext(clientProfile),
     });
     if (!analysis) {
       throw new Error(`AI analysis returned null for emailMessageId=${email.id}`);

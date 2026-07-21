@@ -38,6 +38,14 @@ export interface ClientProfile {
   fixedFields?: Record<string, string>;
 
   /**
+   * Per-field free-text hints describing HOW to find the value in THIS
+   * customer's documents, keyed by field. Forwarded to the AI extraction route
+   * so the model can follow the customer's own layout conventions — e.g.
+   * pickup_reference -> "10-cijferig nummer dat TR bevat". Never a value.
+   */
+  fieldInstructions?: Record<string, string>;
+
+  /**
    * Regex (as string) used to pull a reference out of the text, keyed by field.
    * First capture group (or full match) wins. E.g. invoice_reference -> the BA
    * number, pickup_reference -> the TR number.
