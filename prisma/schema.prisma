@@ -296,6 +296,10 @@ model CustomerProfile {
   contactEmail String                @unique
   active       Boolean               @default(true)
   notes        String?
+  /// Free-text guidance for the AI on how THIS customer builds their documents
+  /// (where each value lives, layout conventions, per-field rules). Forwarded to
+  /// the extraction route; never used as a field value.
+  aiInstructions String?
   createdAt    DateTime              @default(now())
   updatedAt    DateTime              @updatedAt
 
@@ -322,12 +326,7 @@ model CustomerProfileField {
   id        String          @id @default(uuid()) @db.Uuid
   profileId String          @db.Uuid
   key       String
-  /// Fixed default value. Optional: a field may carry only an AI instruction
-  /// (the value varies per email, but HOW to find it is always the same).
   value     String?
-  /// Free-text hint telling the AI how to locate this field in THIS customer's
-  /// documents. Sent to the extraction route; never used as a value.
-  instruction String?
   createdAt DateTime        @default(now())
   updatedAt DateTime        @updatedAt
 

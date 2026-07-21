@@ -53,21 +53,15 @@ export type AiPreDetectedField = {
 };
 
 /**
- * A customer-specific hint telling the AI HOW to locate a field in THIS
- * customer's documents (their layout conventions), e.g.
- * pickup_reference -> "10-cijferig nummer dat TR bevat".
+ * Customer context forwarded to the extraction route. `instructions` is the
+ * operator's free-text guidance on how THIS customer builds their documents
+ * (where each value lives, layout conventions, per-field rules) — e.g.
+ * "Laadreferentie: 10-cijferig nummer dat TR bevat".
  * It is guidance for the extraction, never a value.
  */
-export type AiFieldInstruction = {
-  key: string;
-  label: string;
-  instruction: string;
-};
-
-/** Customer context forwarded to the extraction route. */
 export type AiCustomerProfileContext = {
   name: string;
-  fieldInstructions: AiFieldInstruction[];
+  instructions: string;
 };
 
 /** One order returned by the AI in the new "send-the-eml" flow. */
@@ -807,7 +801,7 @@ export class AiExtractionService {
             : {}),
           // Customer-specific extraction guidance (how THIS client builds their
           // documents). Only sent when the profile actually carries hints.
-          ...(options?.customerProfile?.fieldInstructions?.length
+          ...(options?.customerProfile?.instructions
             ? { customerProfile: options.customerProfile }
             : {}),
         }),

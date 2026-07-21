@@ -147,21 +147,14 @@ export class EmailProcessingProcessor extends WorkerHost {
 
   /**
    * Turn the resolved client profile into the extraction guidance we forward to
-   * the AI: per-field hints on how THIS customer builds their documents (e.g.
-   * "the pickup reference is the 10-digit number containing TR"). Returns null
-   * when the profile has no hints, so we don't send an empty object.
+   * the AI: the operator's free-text description of how THIS customer builds
+   * their documents. Returns null when there is nothing to say, so we never
+   * send an empty object.
    */
   private toCustomerProfileContext(profile: ClientProfile | null) {
-    const instructions = Object.entries(profile?.fieldInstructions ?? {})
-      .map(([key, instruction]) => {
-        const cleaned = (instruction ?? '').toString().trim();
-        if (!key || !cleaned) return null;
-        return { key, label: this.profileFieldLabel(key), instruction: cleaned };
-      })
-      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
-
-    if (!profile || instructions.length === 0) return null;
-    return { name: profile.name, fieldInstructions: instructions };
+    const instructions = (profile?.aiInstructions ?? '').toString().trim();
+    if (!profile || !instructions) return null;
+    return { name: profile.name, instructions };
   }
 
   private buildProfileFieldMeta(

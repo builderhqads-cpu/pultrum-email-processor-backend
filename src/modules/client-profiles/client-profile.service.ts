@@ -23,10 +23,7 @@ const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
 
 type CustomerProfileFieldInput = {
   key: string;
-  /** Fixed default value; may be empty when only an instruction is given. */
   value: string;
-  /** Hint for the AI on how to find this field in the customer's documents. */
-  instruction: string;
 };
 
 type CustomerProfileMutationInput = {
@@ -35,6 +32,8 @@ type CustomerProfileMutationInput = {
   additionalContactEmails: string[];
   active: boolean;
   notes: string | null;
+  /** Free-text guidance for the AI about this customer's documents. */
+  aiInstructions: string | null;
   fields: CustomerProfileFieldInput[];
 };
 
@@ -71,23 +70,6 @@ function toFieldMap(fields: Array<{ key: string; value?: string | null }>) {
   return out;
 }
 
-/**
- * Per-field hints telling the AI HOW to find a value in this customer's
- * documents. Kept apart from {@link toFieldMap}: an instruction is never a
- * value, and a field may carry an instruction with no fixed value at all.
- */
-function toInstructionMap(
-  fields: Array<{ key: string; instruction?: string | null }>,
-) {
-  const out: Record<string, string> = {};
-  for (const field of fields ?? []) {
-    const key = (field?.key ?? '').trim();
-    const instruction = normalizeValue(field?.instruction ?? '');
-    if (!key || !instruction) continue;
-    out[key] = instruction;
-  }
-  return out;
-}
 
 @Injectable()
 export class ClientProfileService implements OnModuleInit {
@@ -157,7 +139,7 @@ export class ClientProfileService implements OnModuleInit {
         emails: [profile.contactEmail, ...profile.emails.map((entry) => entry.email)],
       },
       fixedFields: toFieldMap(profile.fields),
-      fieldInstructions: toInstructionMap(profile.fields),
+      aiInstructions: normalizeValue(profile.aiInstructions ?? '') || undefined,
       notes: profile.notes ?? undefined,
     }));
   }
@@ -333,6 +315,7 @@ export class ClientProfileService implements OnModuleInit {
           contactEmail: input.contactEmail,
           active: input.active,
           notes: input.notes,
+          aiInstructions: input.aiInstructions,
         },
       });
 
@@ -351,7 +334,6 @@ export class ClientProfileService implements OnModuleInit {
             profileId: created.id,
             key: field.key,
             value: field.value || null,
-            instruction: field.instruction || null,
           })),
         });
       }
@@ -412,6 +394,9 @@ export class ClientProfileService implements OnModuleInit {
             : {}),
           ...(input.active !== undefined ? { active: input.active } : {}),
           ...(input.notes !== undefined ? { notes: input.notes } : {}),
+          ...(input.aiInstructions !== undefined
+            ? { aiInstructions: input.aiInstructions }
+            : {}),
         },
       });
 
@@ -517,13 +502,13 @@ export class ClientProfileService implements OnModuleInit {
       contactEmails: [profile.contactEmail, ...profile.emails.map((entry) => entry.email)],
       active: profile.active,
       notes: profile.notes,
+      aiInstructions: profile.aiInstructions ?? '',
       createdAt: profile.createdAt,
       updatedAt: profile.updatedAt,
       fields: profile.fields.map((field) => ({
         id: field.id,
         key: field.key,
         value: field.value ?? '',
-        instruction: field.instruction ?? '',
         label: catalogByKey.get(field.key)?.label ?? field.key,
         requirement:
           catalogByKey.get(field.key)?.requirement ?? FieldRequirement.OPTIONAL,
@@ -546,6 +531,7 @@ export class ClientProfileService implements OnModuleInit {
     additionalContactEmails?: unknown;
     active?: unknown;
     notes?: unknown;
+    aiInstructions?: unknown;
     fields?: unknown;
   }): CustomerProfileMutationInput {
     if (typeof input.name !== 'string' || !input.name.trim()) {
@@ -585,25 +571,24 @@ export class ClientProfileService implements OnModuleInit {
         ? input.notes.trim()
         : null;
 
+    const aiInstructions =
+      typeof input.aiInstructions === 'string' && input.aiInstructions.trim()
+        ? input.aiInstructions.trim()
+        : null;
+
     const rawFields = Array.isArray(input.fields) ? input.fields : [];
     const unique = new Map<string, CustomerProfileFieldInput>();
     for (const rawField of rawFields) {
       if (!rawField || typeof rawField !== 'object') continue;
       const key = ((rawField as any).key ?? '').toString().trim();
       const value = normalizeValue(((rawField as any).value ?? '').toString());
-      const instruction = normalizeValue(
-        ((rawField as any).instruction ?? '').toString(),
-      );
-      // Keep the field when it carries EITHER a fixed value or an instruction:
-      // for many customers the value changes every email but the way to find it
-      // does not, so an instruction-only row is legitimate.
-      if (!key || (!value && !instruction)) continue;
+      if (!key || !value) continue;
       if (!isAllowedInProfile(key)) {
         throw new BadRequestException(
           `Field is not allowed in customer profiles: ${key}`,
         );
       }
-      unique.set(key, { key, value, instruction });
+      unique.set(key, { key, value });
     }
 
     return {
@@ -612,6 +597,7 @@ export class ClientProfileService implements OnModuleInit {
       additionalContactEmails,
       active,
       notes,
+      aiInstructions,
       fields: [...unique.values()],
     };
   }
@@ -622,6 +608,7 @@ export class ClientProfileService implements OnModuleInit {
     additionalContactEmails?: unknown;
     active?: unknown;
     notes?: unknown;
+    aiInstructions?: unknown;
     fields?: unknown;
   }) {
     const out: Partial<CustomerProfileMutationInput> = {};
@@ -675,6 +662,13 @@ export class ClientProfileService implements OnModuleInit {
           : null;
     }
 
+    if (input.aiInstructions !== undefined) {
+      out.aiInstructions =
+        typeof input.aiInstructions === 'string' && input.aiInstructions.trim()
+          ? input.aiInstructions.trim()
+          : null;
+    }
+
     if (input.fields !== undefined) {
       if (!Array.isArray(input.fields)) {
         throw new BadRequestException(
@@ -687,17 +681,13 @@ export class ClientProfileService implements OnModuleInit {
         if (!rawField || typeof rawField !== 'object') continue;
         const key = ((rawField as any).key ?? '').toString().trim();
         const value = normalizeValue(((rawField as any).value ?? '').toString());
-        const instruction = normalizeValue(
-          ((rawField as any).instruction ?? '').toString(),
-        );
-        // A value OR an instruction is enough to keep the field.
-        if (!key || (!value && !instruction)) continue;
+        if (!key || !value) continue;
         if (!isAllowedInProfile(key)) {
           throw new BadRequestException(
             `Field is not allowed in customer profiles: ${key}`,
           );
         }
-        unique.set(key, { key, value, instruction });
+        unique.set(key, { key, value });
       }
 
       out.fields = [...unique.values()];

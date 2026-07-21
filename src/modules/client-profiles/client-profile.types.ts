@@ -38,12 +38,12 @@ export interface ClientProfile {
   fixedFields?: Record<string, string>;
 
   /**
-   * Per-field free-text hints describing HOW to find the value in THIS
-   * customer's documents, keyed by field. Forwarded to the AI extraction route
-   * so the model can follow the customer's own layout conventions — e.g.
-   * pickup_reference -> "10-cijferig nummer dat TR bevat". Never a value.
+   * Free-text guidance describing HOW this customer builds their documents:
+   * where each value lives, layout conventions, per-field rules — e.g.
+   * "Laadreferentie: 10-cijferig nummer dat TR bevat". Forwarded to the AI
+   * extraction route as context. Never used as a value.
    */
-  fieldInstructions?: Record<string, string>;
+  aiInstructions?: string;
 
   /**
    * Regex (as string) used to pull a reference out of the text, keyed by field.
