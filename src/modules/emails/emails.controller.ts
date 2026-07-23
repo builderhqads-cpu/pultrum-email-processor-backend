@@ -17,6 +17,11 @@ export class EmailsController {
     return this.emailsService.findOne(id);
   }
 
+  @Get(':id/original')
+  findOriginal(@Param('id') id: string) {
+    return this.emailsService.findOriginal(id);
+  }
+
   @Post(':id/reclassify')
   reclassify(@Param('id') id: string) {
     return this.emailsService.reclassify(id);

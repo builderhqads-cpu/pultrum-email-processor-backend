@@ -3,6 +3,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service';
 import { QUEUE_EMAIL_PROCESSING } from '../queues/queue-names';
+import { EmailOriginalService } from './email-original.service';
 
 @Injectable()
 export class EmailsService {
@@ -10,6 +11,7 @@ export class EmailsService {
     private readonly prismaService: PrismaService,
     @InjectQueue(QUEUE_EMAIL_PROCESSING)
     private readonly emailProcessingQueue: Queue,
+    private readonly emailOriginalService: EmailOriginalService,
   ) {}
 
   async findAll() {
@@ -163,6 +165,39 @@ export class EmailsService {
         externalReference: o.externalReference,
         batchSequence: o.batchSequence,
       })),
+    };
+  }
+
+  /** Rebuild the email as received (HTML + embedded signature images). */
+  async findOriginal(id: string) {
+    const email = await this.prismaService.emailMessage.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        subject: true,
+        fromEmail: true,
+        fromName: true,
+        receivedAt: true,
+        rawMimeBase64: true,
+        bodyHtml: true,
+        bodyText: true,
+      },
+    });
+    if (!email) throw new NotFoundException(`Email not found: id=${id}`);
+
+    const rendered = await this.emailOriginalService.render({
+      rawMimeBase64: email.rawMimeBase64,
+      bodyHtml: email.bodyHtml,
+      bodyText: email.bodyText,
+    });
+
+    return {
+      id: email.id,
+      subject: email.subject,
+      fromEmail: email.fromEmail,
+      fromName: email.fromName,
+      receivedAt: email.receivedAt,
+      ...rendered,
     };
   }
 
