@@ -793,11 +793,21 @@ export class AiExtractionService {
     }
 
     const apiKey = this.getApiKey();
+    // The .eml route does the whole job (classify + parse attachments + split
+    // into N orders), so it is far slower than the old field extraction — a
+    // weekly planning PDF regularly needs several minutes. It gets its own,
+    // longer budget; AI_EXTRACTION_TIMEOUT_MS stays for the legacy route.
     const timeoutMs = Number(
-      this.configService.get<string>('AI_EXTRACTION_TIMEOUT_MS') || '120000',
+      this.configService.get<string>('AI_EML_PROCESS_TIMEOUT_MS') ||
+        this.configService.get<string>('AI_EXTRACTION_TIMEOUT_MS') ||
+        '600000',
     );
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
     try {
       // Built ONCE and echoed back on the result, so the audit trail shows the
       // exact body we sent instead of a hand-rebuilt copy that can drift.
@@ -850,7 +860,16 @@ export class AiExtractionService {
       return analysis;
     } catch (err: any) {
       clearTimeout(timeout);
-      this.logger.warn(`AI analysis request failed: ${err?.message ?? err}`);
+      // Say WHY it failed: "aborted" alone reads like a bug, when it is really
+      // our own deadline firing and the operator just needs a longer budget.
+      if (timedOut) {
+        this.logger.warn(
+          `AI analysis TIMED OUT after ${timeoutMs}ms calling ${url}. ` +
+            `The route needs longer than the current budget — raise AI_EML_PROCESS_TIMEOUT_MS.`,
+        );
+      } else {
+        this.logger.warn(`AI analysis request failed: ${err?.message ?? err}`);
+      }
       return null;
     }
   }
