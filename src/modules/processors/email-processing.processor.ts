@@ -501,17 +501,35 @@ export class EmailProcessingProcessor extends WorkerHost {
     }
 
     const isBatch = analysis.orders.length > 1;
-    const batch = isBatch
-      ? await this.prismaService.batchImport.create({
-          data: {
-            emailMessageId: email.id,
-            status: BatchImportStatus.PROCESSING,
-            totalDetected: analysis.orders.length,
-            confidence: analysis.confidence,
-            reason: analysis.reason,
-          },
+    // Reuse this email's existing BatchImport on reprocess instead of creating a
+    // new one each time (which would orphan the old batch and its "X of N").
+    const existingBatch = isBatch
+      ? await this.prismaService.batchImport.findFirst({
+          where: { emailMessageId: email.id },
+          orderBy: { createdAt: 'desc' },
         })
       : null;
+    const batch = !isBatch
+      ? null
+      : existingBatch
+        ? await this.prismaService.batchImport.update({
+            where: { id: existingBatch.id },
+            data: {
+              status: BatchImportStatus.PROCESSING,
+              totalDetected: analysis.orders.length,
+              confidence: analysis.confidence,
+              reason: analysis.reason,
+            },
+          })
+        : await this.prismaService.batchImport.create({
+            data: {
+              emailMessageId: email.id,
+              status: BatchImportStatus.PROCESSING,
+              totalDetected: analysis.orders.length,
+              confidence: analysis.confidence,
+              reason: analysis.reason,
+            },
+          });
     if (batch) {
       await this.auditLogService.log({
         entityType: 'BatchImport',
@@ -550,6 +568,17 @@ export class EmailProcessingProcessor extends WorkerHost {
         let orderId: string;
         if (existing) {
           orderId = existing.id;
+          // Reprocess: a fresh BatchImport was created above, so re-link the
+          // reused order to it (and set its sequence). Without this the "order
+          // X of N" context is lost after every reprocess, and orders created
+          // before batch support would never get linked.
+          await this.prismaService.transportOrder.update({
+            where: { id: existing.id },
+            data: {
+              batchImportId: batch?.id ?? null,
+              batchSequence: isBatch ? seq : null,
+            },
+          });
         } else {
           const order = await this.prismaService.transportOrder.create({
             data: {
