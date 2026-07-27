@@ -222,12 +222,23 @@ describe('field-normalize', () => {
       expect(map.get('cargo_unit_amount')).toBe('1');
       expect(map.get('cargo_loading_meter')).toBe('');
       expect(map.get('cargo_volume')).toBe('');
-      expect(map.get('cargo_weight')).toBe('14536.35');
+      // Weight is rounded to whole kilos (14.536,350 -> 14536).
+      expect(map.get('cargo_weight')).toBe('14536');
       expect(map.get('length')).toBe('120');
       expect(map.get('delivery_name')).toBe('');
       expect(map.get('delivery_address')).toBe('Grasbeemd 30');
       expect(map.get('delivery_zipcode')).toBe('5682 JT');
       expect(map.get('delivery_city')).toBe('Best');
+    });
+
+    it('rounds weight to whole kilos (decimals dropped)', () => {
+      const map = new Map<string, string>([
+        ['cargo_weight', '6591.6'],
+        ['goods_weight', '6.129,845'],
+      ]);
+      normalizeFieldMap(map);
+      expect(map.get('cargo_weight')).toBe('6592');
+      expect(map.get('goods_weight')).toBe('6130');
     });
   });
 });

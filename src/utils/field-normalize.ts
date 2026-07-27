@@ -17,6 +17,10 @@
 // Count fields -> whole integer.
 const QUANTITY_KEYS = ['cargo_unit_amount', 'unit_amount', 'goods_unit_amount'];
 
+// Weight fields -> whole kilos. The customer sheets carry decimals, but Pultrum
+// only wants the rounded kilo (per Niek's feedback).
+const WEIGHT_KEYS = ['cargo_weight', 'goods_weight', 'weight'];
+
 // Numeric measure fields where 0 / not-informed must be blank, never "0".
 const ZERO_TO_BLANK_KEYS = [
   'cargo_loading_meter',
@@ -201,6 +205,14 @@ export function normalizeFieldMap(map: Map<string, string>): void {
   }
   for (const key of QUANTITY_KEYS) {
     if (map.has(key)) map.set(key, normalizeQuantity(map.get(key)));
+  }
+  // Weight: round to whole kilos. Done BEFORE zero->blank, on the RAW value, so
+  // parseDecimal reads the customer's notation ("6.129,845") correctly. After
+  // this the value is a clean integer string that blankIfZero preserves.
+  for (const key of WEIGHT_KEYS) {
+    if (!map.has(key)) continue;
+    const n = parseDecimal(map.get(key) ?? '');
+    if (n != null) map.set(key, String(Math.round(n)));
   }
   for (const key of ZERO_TO_BLANK_KEYS) {
     if (map.has(key)) map.set(key, blankIfZero(map.get(key)));

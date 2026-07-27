@@ -332,10 +332,22 @@ export class OrdersService {
       ...request,
       type: replyDraft ? 'REPLY' : 'PROCESSING',
     }));
+
+    // Batch context: so the detail can show "order X of N (same sheet)" instead
+    // of looking like a standalone order (Niek's feedback).
+    let batch: { sequence: number | null; total: number } | null = null;
+    if (order.batchImportId) {
+      const total = await this.prismaService.transportOrder.count({
+        where: { batchImportId: order.batchImportId },
+      });
+      batch = { sequence: order.batchSequence, total };
+    }
+
     return {
       ...order,
       aiRequests,
       aiExtraction,
+      batch,
     };
   }
 
