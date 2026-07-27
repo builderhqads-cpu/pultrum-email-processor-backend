@@ -321,6 +321,7 @@ export class OrdersService {
         },
         xmlDeliveries: true,
         replyDraft: true,
+        emailMessage: { select: { subject: true, fromEmail: true } },
       },
     });
 
@@ -333,14 +334,22 @@ export class OrdersService {
       type: replyDraft ? 'REPLY' : 'PROCESSING',
     }));
 
-    // Batch context: so the detail can show "order X of N (same sheet)" instead
-    // of looking like a standalone order (Niek's feedback).
-    let batch: { sequence: number | null; total: number } | null = null;
+    // Batch context: so the detail can show "order X of N - <sheet subject>"
+    // instead of a vague standalone order (Niek's feedback).
+    let batch: {
+      sequence: number | null;
+      total: number;
+      subject: string | null;
+    } | null = null;
     if (order.batchImportId) {
       const total = await this.prismaService.transportOrder.count({
         where: { batchImportId: order.batchImportId },
       });
-      batch = { sequence: order.batchSequence, total };
+      batch = {
+        sequence: order.batchSequence,
+        total,
+        subject: order.emailMessage?.subject ?? null,
+      };
     }
 
     return {
