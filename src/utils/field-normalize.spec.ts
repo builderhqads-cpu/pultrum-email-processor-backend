@@ -231,6 +231,18 @@ describe('field-normalize', () => {
       expect(map.get('delivery_city')).toBe('Best');
     });
 
+    it('preserves the volume/loading-meter decimal (14.648 stays 14.648 m3)', () => {
+      const map = new Map<string, string>([
+        ['cargo_volume', '14.648'], // AI international decimal (was inflated to 14648)
+        ['goods_volume', '14,648'], // German comma
+        ['cargo_loading_meter', '13.78'],
+      ]);
+      normalizeFieldMap(map);
+      expect(map.get('cargo_volume')).toBe('14.648');
+      expect(map.get('goods_volume')).toBe('14.648');
+      expect(map.get('cargo_loading_meter')).toBe('13.78');
+    });
+
     it('rounds weight to whole kilos (decimals dropped)', () => {
       const map = new Map<string, string>([
         ['cargo_weight', '6591.6'],

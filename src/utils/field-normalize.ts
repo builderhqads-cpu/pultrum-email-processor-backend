@@ -38,6 +38,17 @@ const ZERO_TO_BLANK_KEYS = [
   'fixed_price',
 ];
 
+// These arrive as already-clean decimals ("14.648" = 14.648 m³ from the AI, or
+// our own calc). The plain zero->blank uses the EU heuristic, which would read a
+// dot + 3 digits as a thousands separator and inflate 14.648 -> 14648. Preserve
+// the decimal for these instead.
+const DECIMAL_MEASURE_KEYS = new Set([
+  'cargo_loading_meter',
+  'goods_loading_meter',
+  'cargo_volume',
+  'goods_volume',
+]);
+
 /**
  * Robustly parse a decimal that may use European/German notation. Handles:
  *  - German/EU: "14.536,350" -> 14536.35  (dot = thousands, comma = decimal)
@@ -215,7 +226,13 @@ export function normalizeFieldMap(map: Map<string, string>): void {
     if (n != null) map.set(key, String(Math.round(n)));
   }
   for (const key of ZERO_TO_BLANK_KEYS) {
-    if (map.has(key)) map.set(key, blankIfZero(map.get(key)));
+    if (!map.has(key)) continue;
+    map.set(
+      key,
+      DECIMAL_MEASURE_KEYS.has(key)
+        ? blankIfZeroPreservingDecimalString(map.get(key))
+        : blankIfZero(map.get(key)),
+    );
   }
 
   map.set(
