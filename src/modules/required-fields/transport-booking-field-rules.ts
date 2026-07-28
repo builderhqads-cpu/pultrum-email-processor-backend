@@ -42,6 +42,17 @@ export const TRANSPORT_BOOKING_FIELD_RULES: TransportBookingFieldRule[] = [
     aliases: ['customer id', 'customer_id', 'klantnummer', 'client id'],
   },
   {
+    // Principal / ordering party (NL: opdrachtgever). Display-only for now:
+    // the XML builder is manual and does not reference this key, so nothing is
+    // sent to Creative Gears. Usually set as a fixed field on the client profile
+    // (e.g. Derix -> "Derix Westerkappeln").
+    key: 'opdrachtgever',
+    label: 'Opdrachtgever',
+    xmlPath: 'transportbooking.opdrachtgever',
+    requirement: OPTIONAL,
+    aliases: ['opdrachtgever', 'principal', 'ordering party', 'contratante'],
+  },
+  {
     key: 'shipment_edireference',
     label: 'Shipment EDI reference',
     xmlPath: 'transportbooking.shipments.shipment.edireference',
