@@ -249,18 +249,17 @@ export class TransportBookingValidationService {
   private calcLoadingMeterCm(params: {
     length: string | null | undefined;
     width: string | null | undefined;
-    unitAmount: string | null | undefined;
   }) {
     const length = this.parseNumber(params.length);
     const width = this.parseNumber(params.width);
-    const unitAmount = this.parseNumber(params.unitAmount);
 
-    if (length == null || width == null || unitAmount == null) return null;
+    if (length == null || width == null) return null;
 
-    // Rule requested: (length * width * unit_amount) / 24000, considering cm.
-    // If user provides meters, this will be off; keep it simple for now.
-    const ldm = (length * width * unitAmount) / 24000;
-    return Number.isFinite(ldm) ? ldm : null;
+    // Pultrum's formula (Niek): length(cm) * width(cm) / 24000, rounded to at
+    // most 2 decimals. No unit amount and no trailing zeros.
+    const ldm = (length * width) / 24000;
+    if (!Number.isFinite(ldm)) return null;
+    return Math.round(ldm * 100) / 100;
   }
 
   private generateEdiReference() {
@@ -460,12 +459,11 @@ export class TransportBookingValidationService {
     const computedLdm = this.calcLoadingMeterCm({
       length: map.get('length'),
       width: map.get('width'),
-      unitAmount: map.get('cargo_unit_amount'),
     });
     if (!map.get('cargo_loading_meter')) {
       map.set(
         'cargo_loading_meter',
-        computedLdm == null ? '' : computedLdm.toFixed(3),
+        computedLdm == null ? '' : String(computedLdm),
       );
     }
     if (!map.get('goods_loading_meter')) {
