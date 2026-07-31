@@ -53,21 +53,6 @@ export class XmlService {
     return value == null || !Number.isFinite(value) ? '' : value.toFixed(3);
   }
 
-  /**
-   * Add a matchmode-coded element ONLY when it has a value. An empty coded
-   * lookup (e.g. <customer_id matchmode="1"/>) makes Transpas crash with a bare
-   * HTTP 500, so omitting it is safer than sending it empty.
-   */
-  private addMatchmodeEle(
-    parent: any,
-    tag: string,
-    matchmode: string,
-    value: string | null | undefined,
-  ) {
-    const v = (value ?? '').toString().trim();
-    if (v) parent.ele(tag, { matchmode }).txt(v).up();
-  }
-
   private calcVolume(params: {
     length: string;
     width: string;
@@ -591,17 +576,26 @@ export class XmlService {
     // Final guard: block only when required Pultrum fields are still empty.
     this.assertRequiredNonEmpty(valuesForValidation);
 
-    const booking = create({ version: '1.0', encoding: 'UTF-8' })
+    const doc = create({ version: '1.0', encoding: 'UTF-8' })
       .ele('transportbookings')
-      .ele('transportbooking');
-    booking.ele('edireference').txt(edireference).up();
-    booking.ele('reference').txt(bookingReference).up();
-    // Omit customer_id when empty: an empty matchmode lookup makes Transpas
-    // crash (bare HTTP 500). Send it only when we actually have a code.
-    this.addMatchmodeEle(booking, 'customer_id', '1', customerId);
-    const doc = booking.ele('shipments').ele('shipment');
-    doc.ele('edireference').txt(shipmentEdiReference).up();
-    doc.ele('reference').txt(shipmentReference).up();
+      .ele('transportbooking')
+      .ele('edireference')
+      .txt(edireference)
+      .up()
+      .ele('reference')
+      .txt(bookingReference)
+      .up()
+      .ele('customer_id', { matchmode: '1' })
+      .txt(customerId)
+      .up()
+      .ele('shipments')
+      .ele('shipment')
+      .ele('edireference')
+      .txt(shipmentEdiReference)
+      .up()
+      .ele('reference')
+      .txt(shipmentReference)
+      .up();
 
     // pickupaddress
     const pickup = doc.ele('pickupaddress');
@@ -627,18 +621,14 @@ export class XmlService {
       .ele('zipcode')
       .txt(this.getFieldValue(fieldMap, 'pickup_zipcode'))
       .up();
-    this.addMatchmodeEle(
-      pickup,
-      'city_id',
-      '4',
-      this.getFieldValue(fieldMap, 'pickup_city'),
-    );
-    this.addMatchmodeEle(
-      pickup,
-      'country_id',
-      '2',
-      this.getFieldValue(fieldMap, 'pickup_country'),
-    );
+    pickup
+      .ele('city_id', { matchmode: '4' })
+      .txt(this.getFieldValue(fieldMap, 'pickup_city'))
+      .up();
+    pickup
+      .ele('country_id', { matchmode: '2' })
+      .txt(this.getFieldValue(fieldMap, 'pickup_country'))
+      .up();
     pickup.ele('remarks').txt(pickupRemarks).up();
     pickup.up();
 
@@ -671,18 +661,14 @@ export class XmlService {
       .ele('zipcode')
       .txt(this.getFieldValue(fieldMap, 'delivery_zipcode'))
       .up();
-    this.addMatchmodeEle(
-      delivery,
-      'city_id',
-      '4',
-      this.getFieldValue(fieldMap, 'delivery_city'),
-    );
-    this.addMatchmodeEle(
-      delivery,
-      'country_id',
-      '2',
-      this.getFieldValue(fieldMap, 'delivery_country'),
-    );
+    delivery
+      .ele('city_id', { matchmode: '4' })
+      .txt(this.getFieldValue(fieldMap, 'delivery_city'))
+      .up();
+    delivery
+      .ele('country_id', { matchmode: '2' })
+      .txt(this.getFieldValue(fieldMap, 'delivery_country'))
+      .up();
     delivery.ele('remarks').txt(deliveryRemarks).up();
     delivery.up();
 
@@ -708,8 +694,8 @@ export class XmlService {
 
     const goodslines = cargo.ele('goodslines').ele('goodsline');
     goodslines.ele('unitamount').txt(normalizeQuantity(goodsUnitAmount)).up();
-    this.addMatchmodeEle(goodslines, 'unit_id', '1', goodsUnitId);
-    this.addMatchmodeEle(goodslines, 'product_id', '1', productId);
+    goodslines.ele('unit_id', { matchmode: '1' }).txt(goodsUnitId).up();
+    goodslines.ele('product_id', { matchmode: '1' }).txt(productId).up();
     goodslines.ele('weight').txt(blankIfZero(goodsWeight)).up();
     goodslines
       .ele('loadingmeter')
