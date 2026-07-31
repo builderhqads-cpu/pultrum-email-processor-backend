@@ -142,6 +142,23 @@ export function blankIfZero(value: string | null | undefined): string {
 }
 
 /**
+ * Volume / loading-meter values arrive as clean decimals (from the AI or our own
+ * calc). Round to at most 2 decimals (Niek) and blank a zero. Uses Number()
+ * rather than parseDecimal, whose EU heuristic would misread a dot + 3 digits as
+ * a thousands separator ("14.648" -> 14648).
+ */
+export function roundMeasureBlankIfZero(
+  value: string | null | undefined,
+): string {
+  const v = (value ?? '').toString().trim();
+  if (!v) return '';
+  const n = Number(v.replace(',', '.'));
+  if (!Number.isFinite(n)) return v; // non-numeric -> keep
+  if (n === 0) return '';
+  return String(Math.round(n * 100) / 100);
+}
+
+/**
  * Preserve already-normalized decimal strings (e.g. "16.333", "133.280")
  * produced by backend calculations. This avoids re-parsing them with the
  * locale heuristics that would otherwise interpret a single dot + 3 digits as
@@ -230,7 +247,7 @@ export function normalizeFieldMap(map: Map<string, string>): void {
     map.set(
       key,
       DECIMAL_MEASURE_KEYS.has(key)
-        ? blankIfZeroPreservingDecimalString(map.get(key))
+        ? roundMeasureBlankIfZero(map.get(key))
         : blankIfZero(map.get(key)),
     );
   }
