@@ -203,6 +203,10 @@ describe('XmlService generateOrderXml normalization', () => {
     expect(xml).toContain('<loadingmeter>96.000</loadingmeter>');
     expect(xml).toContain('<volume>737.280</volume>');
 
+    // No customer_id in the fields -> the coded element is omitted entirely
+    // (an empty <customer_id matchmode="1"/> crashes Transpas with a bare 500).
+    expect(xml).not.toContain('<customer_id');
+
     expect(prisma.orderField.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
@@ -217,5 +221,47 @@ describe('XmlService generateOrderXml normalization', () => {
         update: expect.objectContaining({ value: '737.280' }),
       }),
     );
+  });
+
+  it('emits customer_id with its matchmode when a code is present', async () => {
+    const prisma = {
+      transportOrder: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'order-2',
+          status: 'READY_TO_XML',
+          department: 'OPEN_TRANSPORT',
+          customerEmail: 'customer@example.com',
+          missingFields: [],
+          fields: [
+            { key: 'customer_id', value: '12345' },
+            { key: 'invoice_reference', value: 'INV-2026-1' },
+            { key: 'pickup_date', value: '2026-07-15' },
+            { key: 'pickup_address', value: 'Herengracht 182' },
+            { key: 'pickup_zipcode', value: '1016 BR' },
+            { key: 'pickup_city', value: 'Amsterdam' },
+            { key: 'pickup_country', value: 'NL' },
+            { key: 'delivery_date', value: '2026-07-16' },
+            { key: 'delivery_address', value: 'Industriestraße 45' },
+            { key: 'delivery_zipcode', value: '28195' },
+            { key: 'delivery_city', value: 'Bremen' },
+            { key: 'delivery_country', value: 'DE' },
+            { key: 'cargo_unit_amount', value: '8' },
+            { key: 'cargo_unit_id', value: 'pallet' },
+          ],
+          emailMessage: { subject: 'Transportopdracht', attachments: [] },
+        }),
+      },
+      orderField: { upsert: jest.fn().mockResolvedValue(null) },
+      xmlDelivery: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue(null),
+      },
+    } as any;
+
+    const service = new XmlService(prisma, {} as any);
+
+    const xml = await service.generateOrderXml('order-2');
+
+    expect(xml).toContain('<customer_id matchmode="1">12345</customer_id>');
   });
 });
