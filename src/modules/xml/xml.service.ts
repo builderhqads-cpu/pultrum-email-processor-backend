@@ -157,6 +157,22 @@ export class XmlService {
     );
   }
 
+  /**
+   * The <documents> block embeds the full original .eml plus every business
+   * attachment as base64 inside a single XML element — easily several MB. That
+   * can crash the Creative Gears / Transpas import (bare HTTP 500, empty body),
+   * and Transpas may not even define the block. Set
+   * CREATIVE_GEARS_INCLUDE_DOCUMENTS=false to omit it. Default: include, to keep
+   * the previous behaviour.
+   */
+  private shouldIncludeOriginalDocuments(): boolean {
+    return (
+      (process.env.CREATIVE_GEARS_INCLUDE_DOCUMENTS ?? 'true')
+        .trim()
+        .toLowerCase() !== 'false'
+    );
+  }
+
   private appendOriginalDocuments(
     shipmentNode: XMLBuilder,
     emailMessage:
@@ -710,7 +726,9 @@ export class XmlService {
     goodslines.ele('height').txt(blankIfZero(height)).up();
     goodslines.up().up().up(); // goodsline -> goodslines -> cargo
 
-    this.appendOriginalDocuments(doc, order.emailMessage);
+    if (this.shouldIncludeOriginalDocuments()) {
+      this.appendOriginalDocuments(doc, order.emailMessage);
+    }
 
     doc.up().up().up(); // shipment -> shipments -> transportbooking
     doc.up(); // transportbookings

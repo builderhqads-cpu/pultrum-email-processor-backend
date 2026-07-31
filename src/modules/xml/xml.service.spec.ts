@@ -218,4 +218,66 @@ describe('XmlService generateOrderXml normalization', () => {
       }),
     );
   });
+
+  it('omits the <documents> block when CREATIVE_GEARS_INCLUDE_DOCUMENTS=false', async () => {
+    const prev = process.env.CREATIVE_GEARS_INCLUDE_DOCUMENTS;
+    process.env.CREATIVE_GEARS_INCLUDE_DOCUMENTS = 'false';
+    try {
+      const prisma = {
+        transportOrder: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'order-3',
+            status: 'READY_TO_XML',
+            department: 'OPEN_TRANSPORT',
+            customerEmail: 'customer@example.com',
+            missingFields: [],
+            fields: [
+              { key: 'invoice_reference', value: 'INV-2026-1' },
+              { key: 'pickup_date', value: '2026-07-15' },
+              { key: 'pickup_address', value: 'Herengracht 182' },
+              { key: 'pickup_zipcode', value: '1016 BR' },
+              { key: 'pickup_city', value: 'Amsterdam' },
+              { key: 'pickup_country', value: 'NL' },
+              { key: 'delivery_date', value: '2026-07-16' },
+              { key: 'delivery_address', value: 'Klosterstrasse 32' },
+              { key: 'delivery_zipcode', value: '4780' },
+              { key: 'delivery_city', value: 'St. Vith' },
+              { key: 'delivery_country', value: 'BE' },
+              { key: 'cargo_unit_amount', value: '1' },
+              { key: 'cargo_unit_id', value: 'vracht' },
+            ],
+            emailMessage: {
+              subject: 'KW31',
+              rawMimeBase64: 'ZW1sLWNvbnRlbnQ=',
+              rawMimeFileName: 'KW31.eml',
+              rawMimeMimeType: 'message/rfc822',
+              attachments: [
+                {
+                  fileName: 'order.pdf',
+                  mimeType: 'application/pdf',
+                  contentBase64: 'cGRmLWNvbnRlbnQ=',
+                },
+              ],
+            },
+          }),
+        },
+        orderField: { upsert: jest.fn().mockResolvedValue(null) },
+        xmlDelivery: {
+          findFirst: jest.fn().mockResolvedValue(null),
+          create: jest.fn().mockResolvedValue(null),
+        },
+      } as any;
+
+      const service = new XmlService(prisma, {} as any);
+
+      const xml = await service.generateOrderXml('order-3');
+
+      expect(xml).not.toContain('<documents>');
+      expect(xml).not.toContain('contentbase64');
+    } finally {
+      if (prev === undefined)
+        delete process.env.CREATIVE_GEARS_INCLUDE_DOCUMENTS;
+      else process.env.CREATIVE_GEARS_INCLUDE_DOCUMENTS = prev;
+    }
+  });
 });
