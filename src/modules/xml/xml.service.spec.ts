@@ -283,6 +283,60 @@ describe('XmlService generateOrderXml normalization', () => {
     }
   });
 
+  it('keeps the deellading volume (does not recompute it from full dimensions)', async () => {
+    const prisma = {
+      transportOrder: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'order-dl',
+          status: 'READY_TO_XML',
+          department: 'OPEN_TRANSPORT',
+          customerEmail: 'customer@example.com',
+          missingFields: [],
+          fields: [
+            { key: 'invoice_reference', value: 'INV-1' },
+            { key: 'pickup_date', value: '2026-07-06' },
+            { key: 'pickup_address', value: 'Industriestrasse 24' },
+            { key: 'pickup_zipcode', value: '49492' },
+            { key: 'pickup_city', value: 'Westerkappeln' },
+            { key: 'pickup_country', value: 'DE' },
+            { key: 'delivery_date', value: '2026-07-07' },
+            { key: 'delivery_address', value: 'Schlutterweg 68' },
+            { key: 'delivery_zipcode', value: '27755' },
+            { key: 'delivery_city', value: 'Delmenhorst' },
+            { key: 'delivery_country', value: 'DE' },
+            { key: 'cargo_unit_amount', value: '1' },
+            { key: 'cargo_unit_id', value: 'deellading' },
+            { key: 'cargo_weight', value: '1574' },
+            // Per-shipment volume (17.134 / 5), NOT derivable from the full dims.
+            { key: 'cargo_volume', value: '3.43' },
+            // Full (shared) dimensions incl. a height that WOULD recompute volume.
+            { key: 'length', value: '1200' },
+            { key: 'width', value: '250' },
+            { key: 'height', value: '100' },
+          ],
+          emailMessage: { subject: 'KW28', attachments: [] },
+        }),
+      },
+      orderField: { upsert: jest.fn().mockResolvedValue(null) },
+      xmlDelivery: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue(null),
+      },
+    } as any;
+
+    const service = new XmlService(prisma, {} as any);
+    const xml = await service.generateOrderXml('order-dl');
+
+    // The divided volume survives; it is NOT overwritten by length*width*height.
+    expect(xml).toContain('<volume>3.43</volume>');
+    expect(xml).not.toContain('<volume>30'); // 1.2*2.5*1.0 = 3.0 m3 would be wrong
+    expect(
+      prisma.orderField.upsert.mock.calls.some(
+        (c: any[]) => c[0]?.where?.orderId_key?.key === 'cargo_volume',
+      ),
+    ).toBe(false); // no recompute persisted for deellading
+  });
+
   it('emits customer_id from the fields and honours CREATIVE_GEARS_EDI_PROVIDER', async () => {
     const prev = process.env.CREATIVE_GEARS_EDI_PROVIDER;
     process.env.CREATIVE_GEARS_EDI_PROVIDER = '77';

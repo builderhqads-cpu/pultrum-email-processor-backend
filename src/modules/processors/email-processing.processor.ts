@@ -38,6 +38,7 @@ import {
   isExcludedParty,
   parseExcludedPartyNames,
 } from '../../utils/order-exclusion';
+import { applyDeelladingDivision } from '../../utils/deellading';
 import {
   FieldMergeService,
   type MergeableField,
@@ -541,6 +542,17 @@ export class EmailProcessingProcessor extends WorkerHost {
         `Email ${email.id}: all orders excluded, nothing to create`,
       );
       return;
+    }
+
+    // Deellading (part-load): the AI splits a transport into N orders carrying
+    // the TOTAL weight/volume; divide those totals by N here (exact math), so we
+    // never rely on the AI's arithmetic nor let a 3-decimal divided weight trip
+    // the decimal parser (e.g. 8453.025 -> 8453025).
+    const dividedGroups = applyDeelladingDivision(analysis.orders as any);
+    if (dividedGroups > 0) {
+      this.logger.log(
+        `Email ${email.id}: divided ${dividedGroups} deellading group(s)`,
+      );
     }
 
     const isBatch = analysis.orders.length > 1;

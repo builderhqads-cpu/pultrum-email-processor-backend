@@ -424,9 +424,16 @@ export class XmlService {
     const width = this.getFieldValue(fieldMap, 'width');
     const height = this.getFieldValue(fieldMap, 'height');
 
-    const computedCargoVolume = this.formatCalculatedValue(
-      this.calcVolume({ length, width, height, unitAmount }),
-    );
+    // A deellading (part-load) carries a per-shipment volume = total / N, set
+    // upstream. It is NOT derivable from the shared FULL length/width/height, so
+    // never recompute it from the dimensions — that would restore the full-truck
+    // volume and wipe out the division.
+    const isDeellading = unitId.trim().toLowerCase() === 'deellading';
+    const computedCargoVolume = isDeellading
+      ? ''
+      : this.formatCalculatedValue(
+          this.calcVolume({ length, width, height, unitAmount }),
+        );
     let cargoVolume =
       computedCargoVolume || this.getFieldValue(fieldMap, 'cargo_volume');
     if (computedCargoVolume && cargoVolume !== this.getFieldValue(fieldMap, 'cargo_volume')) {
