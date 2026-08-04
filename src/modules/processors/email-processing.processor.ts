@@ -35,6 +35,10 @@ import type { SplitResult } from '../order-split/order-split.types';
 import { sanitizeExtractedValue } from '../../utils/sanitize';
 import { routeTimeBounds } from '../../utils/field-normalize';
 import {
+  isExcludedParty,
+  parseExcludedPartyNames,
+} from '../../utils/order-exclusion';
+import {
   FieldMergeService,
   type MergeableField,
 } from '../field-merge/field-merge.service';
@@ -496,6 +500,45 @@ export class EmailProcessingProcessor extends WorkerHost {
       });
       this.logger.log(
         `Email ${email.id}: not a transport order / no orders (AI)`,
+      );
+      return;
+    }
+
+    // Drop orders Pultrum never transports (e.g. Withagen) BEFORE the batch is
+    // built, so the total and the "X of N" numbering stay contiguous. Filtering
+    // here — not per-iteration below — keeps the count honest (17 of 17, not 18
+    // with a hidden gap).
+    const excludedPartyNames = parseExcludedPartyNames(
+      this.configService.get<string>('ORDER_EXCLUDE_PARTY_NAMES'),
+    );
+    if (excludedPartyNames.length) {
+      const before = analysis.orders.length;
+      analysis.orders = analysis.orders.filter(
+        (o) => !isExcludedParty((o as any).fields, excludedPartyNames),
+      );
+      const dropped = before - analysis.orders.length;
+      if (dropped > 0) {
+        this.logger.log(
+          `Email ${email.id}: dropped ${dropped} excluded order(s) ` +
+            `[${excludedPartyNames.join(', ')}]`,
+        );
+        await this.auditLogService.log({
+          entityType: 'EmailMessage',
+          entityId: email.id,
+          action: 'EMAIL_ORDERS_EXCLUDED',
+          detailsJson: { dropped, excludedPartyNames },
+        });
+      }
+    }
+
+    // Every order was excluded -> nothing to create; mark the e-mail processed.
+    if (analysis.orders.length === 0) {
+      await this.prismaService.emailMessage.update({
+        where: { id: email.id },
+        data: { status: EmailStatus.PROCESSED },
+      });
+      this.logger.log(
+        `Email ${email.id}: all orders excluded, nothing to create`,
       );
       return;
     }
