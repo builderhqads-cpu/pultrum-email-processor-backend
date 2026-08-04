@@ -173,6 +173,18 @@ export class XmlService {
     );
   }
 
+  /**
+   * EDI provider number. Transpas uses it to route THIS order stream to a
+   * dedicated intake, separate from Creative Gears' already-existing couplings.
+   * Pultrum = 98; the number changes per Pultrum company, so it is configurable.
+   * Default 98 keeps go-live working even if the VPS env is not set yet.
+   * NOTE: the exact element name ("EDI.provider" per Rick) and placement still
+   * need to be confirmed with Creative Gears.
+   */
+  private ediProviderNumber(): string {
+    return (process.env.CREATIVE_GEARS_EDI_PROVIDER ?? '98').trim();
+  }
+
   private appendOriginalDocuments(
     shipmentNode: XMLBuilder,
     emailMessage:
@@ -603,6 +615,10 @@ export class XmlService {
       .up()
       .ele('customer_id', { matchmode: '1' })
       .txt(customerId)
+      .up()
+      // Routes this stream to a dedicated Transpas intake (Pultrum = 98).
+      .ele('EDI.provider')
+      .txt(this.ediProviderNumber())
       .up()
       .ele('shipments')
       .ele('shipment')

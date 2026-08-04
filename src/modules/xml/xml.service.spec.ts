@@ -202,6 +202,8 @@ describe('XmlService generateOrderXml normalization', () => {
     expect(xml).toContain('<datetill>2026-07-16</datetill>');
     expect(xml).toContain('<loadingmeter>96.000</loadingmeter>');
     expect(xml).toContain('<volume>737.280</volume>');
+    // EDI provider defaults to 98 (Pultrum) so go-live works without env set.
+    expect(xml).toContain('<EDI.provider>98</EDI.provider>');
 
     expect(prisma.orderField.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -278,6 +280,55 @@ describe('XmlService generateOrderXml normalization', () => {
       if (prev === undefined)
         delete process.env.CREATIVE_GEARS_INCLUDE_DOCUMENTS;
       else process.env.CREATIVE_GEARS_INCLUDE_DOCUMENTS = prev;
+    }
+  });
+
+  it('emits customer_id from the fields and honours CREATIVE_GEARS_EDI_PROVIDER', async () => {
+    const prev = process.env.CREATIVE_GEARS_EDI_PROVIDER;
+    process.env.CREATIVE_GEARS_EDI_PROVIDER = '77';
+    try {
+      const prisma = {
+        transportOrder: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'order-4',
+            status: 'READY_TO_XML',
+            department: 'OPEN_TRANSPORT',
+            customerEmail: 'customer@example.com',
+            missingFields: [],
+            fields: [
+              { key: 'customer_id', value: '12345' },
+              { key: 'invoice_reference', value: 'INV-2026-1' },
+              { key: 'pickup_date', value: '2026-07-15' },
+              { key: 'pickup_address', value: 'Herengracht 182' },
+              { key: 'pickup_zipcode', value: '1016 BR' },
+              { key: 'pickup_city', value: 'Amsterdam' },
+              { key: 'pickup_country', value: 'NL' },
+              { key: 'delivery_date', value: '2026-07-16' },
+              { key: 'delivery_address', value: 'Klosterstrasse 32' },
+              { key: 'delivery_zipcode', value: '4780' },
+              { key: 'delivery_city', value: 'St. Vith' },
+              { key: 'delivery_country', value: 'BE' },
+              { key: 'cargo_unit_amount', value: '1' },
+              { key: 'cargo_unit_id', value: 'vracht' },
+            ],
+            emailMessage: { subject: 'KW31', attachments: [] },
+          }),
+        },
+        orderField: { upsert: jest.fn().mockResolvedValue(null) },
+        xmlDelivery: {
+          findFirst: jest.fn().mockResolvedValue(null),
+          create: jest.fn().mockResolvedValue(null),
+        },
+      } as any;
+
+      const service = new XmlService(prisma, {} as any);
+      const xml = await service.generateOrderXml('order-4');
+
+      expect(xml).toContain('<customer_id matchmode="1">12345</customer_id>');
+      expect(xml).toContain('<EDI.provider>77</EDI.provider>');
+    } finally {
+      if (prev === undefined) delete process.env.CREATIVE_GEARS_EDI_PROVIDER;
+      else process.env.CREATIVE_GEARS_EDI_PROVIDER = prev;
     }
   });
 });

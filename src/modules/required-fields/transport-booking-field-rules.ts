@@ -34,8 +34,11 @@ export const TRANSPORT_BOOKING_FIELD_RULES: TransportBookingFieldRule[] = [
     aliases: ['reference', 'ref'],
   },
   {
+    // Financial relation number in Transpas (NL: klantnummer). Set as a fixed
+    // field on the client profile so it flows into <customer_id> in the XML and
+    // links the order to the right account (Rick/Pultrum request, 2026-08-04).
     key: 'customer_id',
-    label: 'Customer ID',
+    label: 'Klantnummer (customer ID)',
     xmlPath: 'transportbooking.customer_id',
     requirement: OPTIONAL,
     conditional: true,
