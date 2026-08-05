@@ -202,8 +202,13 @@ describe('XmlService generateOrderXml normalization', () => {
     expect(xml).toContain('<datetill>2026-07-16</datetill>');
     expect(xml).toContain('<loadingmeter>96.000</loadingmeter>');
     expect(xml).toContain('<volume>737.280</volume>');
-    // EDI provider defaults to 98 (Pultrum) so go-live works without env set.
-    expect(xml).toContain('<EDI.provider>98</EDI.provider>');
+    // ediprovider_id defaults to 98 (Pultrum), matchmode 0, under <import>.
+    expect(xml).toContain('<ediprovider_id matchmode="0">98</ediprovider_id>');
+    // The provider sits between <import> and <transportbookings>, not inside a
+    // transportbooking (Creative Gears spec).
+    expect(xml).toMatch(
+      /<import>\s*<ediprovider_id matchmode="0">98<\/ediprovider_id>\s*<transportbookings>/,
+    );
 
     expect(prisma.orderField.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -379,7 +384,7 @@ describe('XmlService generateOrderXml normalization', () => {
       const xml = await service.generateOrderXml('order-4');
 
       expect(xml).toContain('<customer_id matchmode="1">12345</customer_id>');
-      expect(xml).toContain('<EDI.provider>77</EDI.provider>');
+      expect(xml).toContain('<ediprovider_id matchmode="0">77</ediprovider_id>');
     } finally {
       if (prev === undefined) delete process.env.CREATIVE_GEARS_EDI_PROVIDER;
       else process.env.CREATIVE_GEARS_EDI_PROVIDER = prev;

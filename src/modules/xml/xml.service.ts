@@ -178,8 +178,8 @@ export class XmlService {
    * dedicated intake, separate from Creative Gears' already-existing couplings.
    * Pultrum = 98; the number changes per Pultrum company, so it is configurable.
    * Default 98 keeps go-live working even if the VPS env is not set yet.
-   * NOTE: the exact element name ("EDI.provider" per Rick) and placement still
-   * need to be confirmed with Creative Gears.
+   * Emitted as <ediprovider_id matchmode="0"> under <import> (Creative Gears
+   * spec, confirmed 2026-08-05).
    */
   private ediProviderNumber(): string {
     return (process.env.CREATIVE_GEARS_EDI_PROVIDER ?? '98').trim();
@@ -612,6 +612,14 @@ export class XmlService {
     this.assertRequiredNonEmpty(valuesForValidation);
 
     const doc = create({ version: '1.0', encoding: 'UTF-8' })
+      .ele('import')
+      // ediprovider_id routes this stream to a dedicated Transpas intake
+      // (Pultrum = 98). Confirmed by Creative Gears (Gabriela, 2026-08-05):
+      // element name ediprovider_id, matchmode 0, sitting between <import> and
+      // <transportbookings> — NOT inside transportbooking.
+      .ele('ediprovider_id', { matchmode: '0' })
+      .txt(this.ediProviderNumber())
+      .up()
       .ele('transportbookings')
       .ele('transportbooking')
       .ele('edireference')
@@ -622,10 +630,6 @@ export class XmlService {
       .up()
       .ele('customer_id', { matchmode: '1' })
       .txt(customerId)
-      .up()
-      // Routes this stream to a dedicated Transpas intake (Pultrum = 98).
-      .ele('EDI.provider')
-      .txt(this.ediProviderNumber())
       .up()
       .ele('shipments')
       .ele('shipment')
