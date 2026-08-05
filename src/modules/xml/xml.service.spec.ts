@@ -204,6 +204,10 @@ describe('XmlService generateOrderXml normalization', () => {
     expect(xml).toContain('<datetill>2026-07-16</datetill>');
     expect(xml).toContain('<loadingmeter>96.000</loadingmeter>');
     expect(xml).toContain('<volume>737.280</volume>');
+    // Both cargo AND goodsline unit_id carry matchmode="1" (Creative Gears):
+    // no bare <unit_id> without the attribute.
+    expect(xml).toContain('<unit_id matchmode="1">pallet</unit_id>');
+    expect(xml).not.toMatch(/<unit_id>/);
     // ediprovider_id defaults to 98 (Pultrum), matchmode 0, under <import>.
     expect(xml).toContain('<ediprovider_id matchmode="0">98</ediprovider_id>');
     // The provider sits between <import> and <transportbookings>, not inside a

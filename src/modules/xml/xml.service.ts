@@ -719,7 +719,9 @@ export class XmlService {
     // cargo
     const cargo = doc.ele('cargo');
     cargo.ele('unitamount').txt(normalizeQuantity(unitAmount)).up();
-    cargo.ele('unit_id').txt(unitId).up();
+    // Coded lookup into Transpas master data — same matchmode as the goodsline
+    // unit_id (Creative Gears: cargo unit_id must carry matchmode="1" too).
+    cargo.ele('unit_id', { matchmode: '1' }).txt(unitId).up();
     cargo.ele('weight').txt(blankIfZero(weight)).up();
     cargo
       .ele('loadingmeter')
