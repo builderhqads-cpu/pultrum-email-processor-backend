@@ -1,11 +1,13 @@
 import {
   blankIfZero,
   blankIfZeroPreservingDecimalString,
+  dashLtReference,
   dropNameIfCity,
   normalizeFieldMap,
   normalizeQuantity,
   normalizeTime,
   parseDecimal,
+  roundWholeCm,
   routeTimeBounds,
   splitStreetAddress,
   toCentimeters,
@@ -100,6 +102,34 @@ describe('field-normalize', () => {
     it('leaves a unitless number unscaled (just cleans notation)', () => {
       expect(toCentimeters('120')).toBe('120');
       expect(toCentimeters('')).toBe('');
+    });
+  });
+
+  describe('roundWholeCm', () => {
+    it('rounds a dimension to whole centimeters', () => {
+      expect(roundWholeCm('125.5')).toBe('126');
+      expect(roundWholeCm('253.4')).toBe('253');
+      expect(roundWholeCm('1200')).toBe('1200');
+    });
+
+    it('keeps empty / non-numeric untouched', () => {
+      expect(roundWholeCm('')).toBe('');
+      expect(roundWholeCm(null)).toBe('');
+      expect(roundWholeCm('n/a')).toBe('n/a');
+    });
+  });
+
+  describe('dashLtReference', () => {
+    it('joins the code and the LT-number with a dash', () => {
+      expect(dashLtReference('26TR001853 LT01')).toBe('26TR001853-LT01');
+      expect(dashLtReference('26TR001807 LT01')).toBe('26TR001807-LT01');
+      expect(dashLtReference('26TR001559 LTI062')).toBe('26TR001559-LTI062');
+    });
+
+    it('leaves references without an LT-token untouched', () => {
+      expect(dashLtReference('26BA006971')).toBe('26BA006971');
+      expect(dashLtReference('25TR003132-1')).toBe('25TR003132-1');
+      expect(dashLtReference('')).toBe('');
     });
   });
 
@@ -211,6 +241,8 @@ describe('field-normalize', () => {
         ['cargo_volume', '0,000'],
         ['cargo_weight', '14.536,350 kg'],
         ['length', '1200 mm'],
+        ['width', '1255 mm'], // 125.5 cm -> rounded to whole cm
+        ['pickup_reference', '26TR001853 LT01'],
         ['delivery_name', 'Best'],
         ['delivery_city', 'Best'],
         ['delivery_address', 'Grasbeemd 30 5682 JT Best'],
@@ -225,6 +257,10 @@ describe('field-normalize', () => {
       // Weight is rounded to whole kilos (14.536,350 -> 14536).
       expect(map.get('cargo_weight')).toBe('14536');
       expect(map.get('length')).toBe('120');
+      // 1255 mm -> 125.5 cm -> whole cm.
+      expect(map.get('width')).toBe('126');
+      // Code + LT joined with a dash.
+      expect(map.get('pickup_reference')).toBe('26TR001853-LT01');
       expect(map.get('delivery_name')).toBe('');
       expect(map.get('delivery_address')).toBe('Grasbeemd 30');
       expect(map.get('delivery_zipcode')).toBe('5682 JT');

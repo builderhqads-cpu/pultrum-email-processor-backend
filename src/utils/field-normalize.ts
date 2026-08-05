@@ -119,6 +119,29 @@ export function toCentimeters(value: string | null | undefined): string {
   return formatNumber(n); // no unit -> keep scale, just clean notation
 }
 
+/**
+ * Round a cm-normalized dimension to a whole centimeter (Niek: length/width/
+ * height always in whole cm). Non-numeric / empty are kept as-is.
+ */
+export function roundWholeCm(value: string | null | undefined): string {
+  const v = (value ?? '').toString().trim();
+  if (!v) return '';
+  const n = parseDecimal(v);
+  if (n == null) return v;
+  return String(Math.round(n));
+}
+
+/**
+ * Derix reference format (Niek): a code + an LT-number must be joined with a
+ * dash, e.g. "26TR001853 LT01" -> "26TR001853-LT01". Only the whitespace right
+ * before a trailing LT-token is replaced; other references are untouched.
+ */
+export function dashLtReference(value: string | null | undefined): string {
+  const v = (value ?? '').toString().trim();
+  if (!v) return '';
+  return v.replace(/\s+(LT[\w.]+)\s*$/i, '-$1');
+}
+
 /** "1,00 st" / "2.0" -> "2"; non-numeric left as-is; empty -> "". */
 export function normalizeQuantity(value: string | null | undefined): string {
   const v = (value ?? '').toString().trim();
@@ -227,9 +250,14 @@ export function splitStreetAddress(input: {
  * derivations/calculations that need the raw numeric values.
  */
 export function normalizeFieldMap(map: Map<string, string>): void {
-  // Dimensions -> centimeters (when a unit is present) before the zero check.
+  // Dimensions -> centimeters (when a unit is present), then rounded to whole
+  // centimeters (Niek), before the zero check.
   for (const key of ['length', 'width', 'height']) {
-    if (map.has(key)) map.set(key, toCentimeters(map.get(key)));
+    if (map.has(key)) map.set(key, roundWholeCm(toCentimeters(map.get(key))));
+  }
+  // References: join the code and the LT-number with a dash (Niek).
+  for (const key of ['pickup_reference', 'delivery_reference']) {
+    if (map.has(key)) map.set(key, dashLtReference(map.get(key)));
   }
   for (const key of QUANTITY_KEYS) {
     if (map.has(key)) map.set(key, normalizeQuantity(map.get(key)));
