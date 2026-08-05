@@ -170,6 +170,9 @@ describe('XmlService generateOrderXml normalization', () => {
             { key: 'delivery_zipcode', value: '28195' },
             { key: 'delivery_city', value: 'Bremen' },
             { key: 'delivery_country', value: 'DE' },
+            { key: 'pickup_remarks', value: 'Poort 3' },
+            { key: 'driver_pickup_info', value: 'Altijd lieferschein meenemen!' },
+            { key: 'driver_delivery_info', value: 'Foto van pakbon maken' },
             { key: 'cargo_unit_amount', value: '8' },
             { key: 'cargo_unit_id', value: 'pallet' },
             { key: 'cargo_weight', value: '18500' },
@@ -208,6 +211,12 @@ describe('XmlService generateOrderXml normalization', () => {
     // no bare <unit_id> without the attribute.
     expect(xml).toContain('<unit_id matchmode="1">pallet</unit_id>');
     expect(xml).not.toMatch(/<unit_id>/);
+    // Driver info is folded into the address <remarks> (provisional):
+    // pickup combines the remark + driver info; delivery has only driver info.
+    expect(xml).toContain(
+      '<remarks>Poort 3 — Altijd lieferschein meenemen!</remarks>',
+    );
+    expect(xml).toContain('<remarks>Foto van pakbon maken</remarks>');
     // ediprovider_id defaults to 98 (Pultrum), matchmode 0, under <import>.
     expect(xml).toContain('<ediprovider_id matchmode="0">98</ediprovider_id>');
     // The provider sits between <import> and <transportbookings>, not inside a

@@ -49,6 +49,11 @@ export class XmlService {
     );
   }
 
+  /** Join the non-empty remark parts into one <remarks> text. */
+  private combineRemarks(...parts: string[]): string {
+    return parts.map((part) => (part ?? '').trim()).filter(Boolean).join(' — ');
+  }
+
   private formatCalculatedValue(value: number | null) {
     return value == null || !Number.isFinite(value) ? '' : value.toFixed(3);
   }
@@ -574,8 +579,18 @@ export class XmlService {
       fieldMap.set('goods_weight', goodsWeight);
     }
 
-    const pickupRemarks = this.getFieldValue(fieldMap, 'pickup_remarks');
-    const deliveryRemarks = this.getFieldValue(fieldMap, 'delivery_remarks');
+    // Driver loading/unloading info (chauffeur laad-/losinfo) must reach Transpas
+    // (Niek, 2026-08-05). Provisional: fold it into the address <remarks> — the
+    // only text field we have there today. Swap to a dedicated element once Rick
+    // confirms which one Transpas expects.
+    const pickupRemarks = this.combineRemarks(
+      this.getFieldValue(fieldMap, 'pickup_remarks'),
+      this.getFieldValue(fieldMap, 'driver_pickup_info'),
+    );
+    const deliveryRemarks = this.combineRemarks(
+      this.getFieldValue(fieldMap, 'delivery_remarks'),
+      this.getFieldValue(fieldMap, 'driver_delivery_info'),
+    );
 
     const pickupDateTill = this.getFieldValue(fieldMap, 'pickup_date_till');
     const pickupTimeTill = this.getFieldValue(fieldMap, 'pickup_time_till');
