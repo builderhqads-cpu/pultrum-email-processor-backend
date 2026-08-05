@@ -227,7 +227,8 @@ export class XmlService {
       if (!this.isSupportedOriginalAttachment(attachment)) continue;
 
       documentEntries.push({
-        documentType: 'attachment',
+        // Transpas expects a numeric document-type code; 19 = attachment.
+        documentType: '19',
         fileName: this.normalizeDocumentFileName(
           attachment.fileName,
           `attachment-${documentEntries.length + 1}`,

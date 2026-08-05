@@ -95,6 +95,8 @@ describe('XmlService original documents packaging', () => {
     expect(xml).toContain('<mimetype>message/rfc822</mimetype>');
     expect(xml).toContain('<contentbase64>ZW1sLWNvbnRlbnQ=</contentbase64>');
 
+    // Attachments carry the numeric Transpas document-type code 19.
+    expect(xml).toContain('<documenttype>19</documenttype>');
     expect(xml).toContain('<filename>order.pdf</filename>');
     expect(xml).toContain('<mimetype>application/pdf</mimetype>');
     expect(xml).toContain('<contentbase64>cGRmLWNvbnRlbnQ=</contentbase64>');
