@@ -153,6 +153,7 @@ describe('XmlService generateOrderXml normalization', () => {
           missingFields: [],
           fields: [
             { key: 'invoice_reference', value: 'INV-2026-1507' },
+            { key: 'transport_type', value: 'Platte X-Lam' },
             { key: 'pickup_reference', value: 'PU-2026-1507' },
             { key: 'pickup_date', value: '2026-07-15' },
             { key: 'pickup_date_till', value: '2026-07-16' },
@@ -162,6 +163,12 @@ describe('XmlService generateOrderXml normalization', () => {
             { key: 'pickup_zipcode', value: '1016 BR' },
             { key: 'pickup_city', value: 'Amsterdam' },
             { key: 'pickup_country', value: 'NL' },
+            { key: 'pickup_contact', value: 'Nils Mindrup' },
+            { key: 'pickup_phone', value: '00495456930356' },
+            { key: 'pickup_email', value: 'transporte.wk@derix.de' },
+            { key: 'delivery_contact', value: 'Jan Jansen' },
+            { key: 'delivery_phone', value: '0612345678' },
+            { key: 'delivery_email', value: 'ontvangst@klant.nl' },
             { key: 'delivery_reference', value: 'DL-2026-1507' },
             { key: 'delivery_date', value: '2026-07-16' },
             { key: 'delivery_time', value: '10:00' },
@@ -221,6 +228,23 @@ describe('XmlService generateOrderXml normalization', () => {
       '<driverinfo>Altijd lieferschein meenemen!</driverinfo>',
     );
     expect(xml).toContain('<driverinfo>Foto van pakbon maken</driverinfo>');
+    // Rick's mapping corrections (2026-08-06):
+    // invoice reference -> shipment/reference
+    expect(xml).toMatch(
+      /<shipment>[\s\S]*<reference>INV-2026-1507<\/reference>/,
+    );
+    // transport type -> coded transportkind_id
+    expect(xml).toContain(
+      '<transportkind_id matchmode="1">Platte X-Lam</transportkind_id>',
+    );
+    // pickup + delivery contact/phone/email
+    expect(xml).toContain('<contact>Nils Mindrup</contact>');
+    expect(xml).toContain('<phone>00495456930356</phone>');
+    expect(xml).toContain('<email>transporte.wk@derix.de</email>');
+    expect(xml).toContain('<contact>Jan Jansen</contact>');
+    expect(xml).toContain('<email>ontvangst@klant.nl</email>');
+    // length also at cargo level
+    expect(xml).toMatch(/<cargo>[\s\S]*<length>1200<\/length>/);
     // ediprovider_id defaults to 98 (Pultrum), matchmode 0, under <import>.
     expect(xml).toContain('<ediprovider_id matchmode="0">98</ediprovider_id>');
     // The provider sits between <import> and <transportbookings>, not inside a

@@ -645,8 +645,16 @@ export class XmlService {
       .ele('edireference')
       .txt(shipmentEdiReference)
       .up()
+      // Rick/ArtSystems: the invoice reference (factuurreferentie) belongs in
+      // shipment/reference. The transport + LT stays in the pickup/delivery refs.
       .ele('reference')
-      .txt(shipmentReference)
+      .txt(this.getFieldValue(fieldMap, 'invoice_reference') || shipmentReference)
+      .up();
+
+    // Transport type (translated) as a coded lookup into Transpas master data.
+    doc
+      .ele('transportkind_id', { matchmode: '1' })
+      .txt(this.getFieldValue(fieldMap, 'transport_type'))
       .up();
 
     // pickupaddress
@@ -681,6 +689,12 @@ export class XmlService {
       .ele('country_id', { matchmode: '2' })
       .txt(this.getFieldValue(fieldMap, 'pickup_country'))
       .up();
+    pickup
+      .ele('contact')
+      .txt(this.getFieldValue(fieldMap, 'pickup_contact'))
+      .up();
+    pickup.ele('phone').txt(this.getFieldValue(fieldMap, 'pickup_phone')).up();
+    pickup.ele('email').txt(this.getFieldValue(fieldMap, 'pickup_email')).up();
     pickup.ele('remarks').txt(pickupRemarks).up();
     pickup.ele('driverinfo').txt(pickupDriverInfo).up();
     pickup.up();
@@ -722,6 +736,18 @@ export class XmlService {
       .ele('country_id', { matchmode: '2' })
       .txt(this.getFieldValue(fieldMap, 'delivery_country'))
       .up();
+    delivery
+      .ele('contact')
+      .txt(this.getFieldValue(fieldMap, 'delivery_contact'))
+      .up();
+    delivery
+      .ele('phone')
+      .txt(this.getFieldValue(fieldMap, 'delivery_phone'))
+      .up();
+    delivery
+      .ele('email')
+      .txt(this.getFieldValue(fieldMap, 'delivery_email'))
+      .up();
     delivery.ele('remarks').txt(deliveryRemarks).up();
     delivery.ele('driverinfo').txt(deliveryDriverInfo).up();
     delivery.up();
@@ -747,6 +773,8 @@ export class XmlService {
       .up();
     cargo.ele('barcode').txt(barcode).up();
     cargo.ele('cmrnumber').txt(this.getFieldValue(fieldMap, 'cmr_number')).up();
+    // Length also at cargo level (Rick/Niek: it was only at goods level).
+    cargo.ele('length').txt(blankIfZero(length)).up();
 
     const goodslines = cargo.ele('goodslines').ele('goodsline');
     goodslines.ele('unitamount').txt(normalizeQuantity(goodsUnitAmount)).up();
