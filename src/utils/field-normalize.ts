@@ -256,7 +256,11 @@ export function normalizeFieldMap(map: Map<string, string>): void {
     if (map.has(key)) map.set(key, roundWholeCm(toCentimeters(map.get(key))));
   }
   // References: join the code and the LT-number with a dash (Niek).
-  for (const key of ['pickup_reference', 'delivery_reference']) {
+  for (const key of [
+    'pickup_reference',
+    'delivery_reference',
+    'shipment_reference',
+  ]) {
     if (map.has(key)) map.set(key, dashLtReference(map.get(key)));
   }
   for (const key of QUANTITY_KEYS) {
