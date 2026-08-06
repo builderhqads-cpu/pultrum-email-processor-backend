@@ -90,27 +90,29 @@ describe('XmlService original documents packaging', () => {
     const xml = shipment.doc().end({ prettyPrint: true });
 
     expect(xml).toContain('<documents>');
-    // TPE Standard: 19 = EMAIL (.eml), 92 = EMAIL Attachment.
-    expect(xml).toContain('<documenttype>19</documenttype>');
+    // TPE Standard: <documenttype_id matchmode="0">, <filedata>, <concerns>.
+    // 19 = EMAIL (.eml), 92 = EMAIL Attachment.
+    expect(xml).toContain('<documenttype_id matchmode="0">19</documenttype_id>');
     expect(xml).toContain('<filename>Transport Request 003.eml</filename>');
-    expect(xml).toContain('<mimetype>message/rfc822</mimetype>');
-    expect(xml).toContain('<contentbase64>ZW1sLWNvbnRlbnQ=</contentbase64>');
+    expect(xml).toContain('<filedata>ZW1sLWNvbnRlbnQ=</filedata>');
+    expect(xml).toContain('<concerns>E-mail</concerns>');
 
-    // Attachments carry the numeric Transpas document-type code 92.
-    expect(xml).toContain('<documenttype>92</documenttype>');
+    // Attachments carry document-type code 92, base64 in <filedata>.
+    expect(xml).toContain('<documenttype_id matchmode="0">92</documenttype_id>');
     expect(xml).toContain('<filename>order.pdf</filename>');
-    expect(xml).toContain('<mimetype>application/pdf</mimetype>');
-    expect(xml).toContain('<contentbase64>cGRmLWNvbnRlbnQ=</contentbase64>');
+    expect(xml).toContain('<filedata>cGRmLWNvbnRlbnQ=</filedata>');
+    expect(xml).toContain('<concerns>Bijlage</concerns>');
 
     expect(xml).toContain('<filename>rates.xlsx</filename>');
-    expect(xml).toContain(
-      '<mimetype>application/vnd.openxmlformats-officedocument.spreadsheetml.sheet</mimetype>',
-    );
-    expect(xml).toContain('<contentbase64>eGxzeC1jb250ZW50</contentbase64>');
+    expect(xml).toContain('<filedata>eGxzeC1jb250ZW50</filedata>');
 
     // A real image attachment (e.g. an access route) is now packaged too.
     expect(xml).toContain('<filename>access-route.jpg</filename>');
-    expect(xml).toContain('<mimetype>image/jpeg</mimetype>');
+
+    // The old (wrong) element names must be gone.
+    expect(xml).not.toContain('<mimetype>');
+    expect(xml).not.toContain('<contentbase64>');
+    expect(xml).not.toContain('<documenttype>');
 
     // No content -> not attached.
     expect(xml).not.toContain('empty.docx');

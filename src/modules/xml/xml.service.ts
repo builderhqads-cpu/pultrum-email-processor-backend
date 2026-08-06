@@ -207,25 +207,29 @@ export class XmlService {
         }
       | null
       | undefined,
+    reference?: string,
   ) {
     if (!emailMessage) return;
+    // TPE Standard structure (ArtSystems wiki): each <document> carries
+    // <documenttype_id matchmode="0">, <filename>, <filedata> (base64),
+    // <reference> and <concerns>. NOT <documenttype>/<mimetype>/<contentbase64>.
     const documentEntries: Array<{
       documentType: string;
       fileName: string;
-      mimeType: string;
-      contentBase64: string;
+      fileData: string;
+      concerns: string;
     }> = [];
 
     if (emailMessage.rawMimeBase64?.trim()) {
       documentEntries.push({
-        // TPE Standard (ArtSystems, via Rick 2026-08-06): 19 = EMAIL (the .eml).
+        // 19 = EMAIL (the original .eml), per Rick/ArtSystems (2026-08-06).
         documentType: '19',
         fileName: this.normalizeDocumentFileName(
           emailMessage.rawMimeFileName,
           'original-email.eml',
         ),
-        mimeType: emailMessage.rawMimeMimeType?.trim() || 'message/rfc822',
-        contentBase64: emailMessage.rawMimeBase64.trim(),
+        fileData: emailMessage.rawMimeBase64.trim(),
+        concerns: 'E-mail',
       });
     }
 
@@ -233,14 +237,14 @@ export class XmlService {
       if (!this.isSupportedOriginalAttachment(attachment)) continue;
 
       documentEntries.push({
-        // TPE Standard (ArtSystems, via Rick 2026-08-06): 92 = EMAIL Attachment.
+        // 92 = EMAIL Attachment (PDF/DOCX/XLSX), per Rick/ArtSystems.
         documentType: '92',
         fileName: this.normalizeDocumentFileName(
           attachment.fileName,
           `attachment-${documentEntries.length + 1}`,
         ),
-        mimeType: (attachment.mimeType || 'application/octet-stream').trim(),
-        contentBase64: (attachment.contentBase64 || '').trim(),
+        fileData: (attachment.contentBase64 || '').trim(),
+        concerns: 'Bijlage',
       });
     }
 
@@ -248,21 +252,16 @@ export class XmlService {
 
     const documents = shipmentNode.ele('documents');
     for (const entry of documentEntries) {
-      documents
-        .ele('document')
-        .ele('documenttype')
+      const documentNode = documents.ele('document');
+      documentNode
+        .ele('documenttype_id', { matchmode: '0' })
         .txt(entry.documentType)
-        .up()
-        .ele('filename')
-        .txt(entry.fileName)
-        .up()
-        .ele('mimetype')
-        .txt(entry.mimeType)
-        .up()
-        .ele('contentbase64')
-        .txt(entry.contentBase64)
-        .up()
         .up();
+      documentNode.ele('filename').txt(entry.fileName).up();
+      documentNode.ele('filedata').txt(entry.fileData).up();
+      if (reference) documentNode.ele('reference').txt(reference).up();
+      documentNode.ele('concerns').txt(entry.concerns).up();
+      documentNode.up();
     }
     documents.up();
   }
@@ -773,7 +772,11 @@ export class XmlService {
     goodslines.up().up().up(); // goodsline -> goodslines -> cargo
 
     if (this.shouldIncludeOriginalDocuments()) {
-      this.appendOriginalDocuments(doc, order.emailMessage);
+      this.appendOriginalDocuments(
+        doc,
+        order.emailMessage,
+        shipmentReference || bookingReference,
+      );
     }
 
     doc.up().up().up(); // shipment -> shipments -> transportbooking
