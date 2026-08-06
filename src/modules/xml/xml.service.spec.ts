@@ -214,12 +214,13 @@ describe('XmlService generateOrderXml normalization', () => {
     // no bare <unit_id> without the attribute.
     expect(xml).toContain('<unit_id matchmode="1">pallet</unit_id>');
     expect(xml).not.toMatch(/<unit_id>/);
-    // Driver info is folded into the address <remarks> (provisional):
-    // pickup combines the remark + driver info; delivery has only driver info.
+    // Driver info goes to the dedicated <driverinfo> field (Transpas), and the
+    // address <remarks> keeps ONLY the address remark.
+    expect(xml).toContain('<remarks>Poort 3</remarks>');
     expect(xml).toContain(
-      '<remarks>Poort 3 — Altijd lieferschein meenemen!</remarks>',
+      '<driverinfo>Altijd lieferschein meenemen!</driverinfo>',
     );
-    expect(xml).toContain('<remarks>Foto van pakbon maken</remarks>');
+    expect(xml).toContain('<driverinfo>Foto van pakbon maken</driverinfo>');
     // ediprovider_id defaults to 98 (Pultrum), matchmode 0, under <import>.
     expect(xml).toContain('<ediprovider_id matchmode="0">98</ediprovider_id>');
     // The provider sits between <import> and <transportbookings>, not inside a
