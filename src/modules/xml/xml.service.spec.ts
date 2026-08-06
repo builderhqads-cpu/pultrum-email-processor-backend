@@ -154,6 +154,7 @@ describe('XmlService generateOrderXml normalization', () => {
           fields: [
             { key: 'invoice_reference', value: 'INV-2026-1507' },
             { key: 'transport_type', value: 'Platte X-Lam' },
+            { key: 'product_description', value: 'Constructie - Hout' },
             { key: 'pickup_reference', value: 'PU-2026-1507' },
             { key: 'pickup_date', value: '2026-07-15' },
             { key: 'pickup_date_till', value: '2026-07-16' },
@@ -243,8 +244,13 @@ describe('XmlService generateOrderXml normalization', () => {
     expect(xml).toContain('<email>transporte.wk@derix.de</email>');
     expect(xml).toContain('<contact>Jan Jansen</contact>');
     expect(xml).toContain('<email>ontvangst@klant.nl</email>');
-    // length also at cargo level
+    // length/width/height also at cargo level
     expect(xml).toMatch(/<cargo>[\s\S]*<length>1200<\/length>/);
+    expect(xml).toMatch(/<cargo>[\s\S]*<width>240<\/width>/);
+    // productdescription at cargo level (TPE Standard element name)
+    expect(xml).toContain(
+      '<productdescription>Constructie - Hout</productdescription>',
+    );
     // ediprovider_id defaults to 98 (Pultrum), matchmode 0, under <import>.
     expect(xml).toContain('<ediprovider_id matchmode="0">98</ediprovider_id>');
     // The provider sits between <import> and <transportbookings>, not inside a

@@ -758,6 +758,11 @@ export class XmlService {
     // Coded lookup into Transpas master data — same matchmode as the goodsline
     // unit_id (Creative Gears: cargo unit_id must carry matchmode="1" too).
     cargo.ele('unit_id', { matchmode: '1' }).txt(unitId).up();
+    // productdescription at cargo level (TPE Standard example, Niek's portal).
+    cargo
+      .ele('productdescription')
+      .txt(this.getFieldValue(fieldMap, 'product_description'))
+      .up();
     cargo.ele('weight').txt(blankIfZero(weight)).up();
     cargo
       .ele('loadingmeter')
@@ -773,8 +778,11 @@ export class XmlService {
       .up();
     cargo.ele('barcode').txt(barcode).up();
     cargo.ele('cmrnumber').txt(this.getFieldValue(fieldMap, 'cmr_number')).up();
-    // Length also at cargo level (Rick/Niek: it was only at goods level).
+    // Dimensions also at cargo level (Rick/Niek; TPE Standard has length/width/
+    // height at cargo). They stay in the goodsline as well.
     cargo.ele('length').txt(blankIfZero(length)).up();
+    cargo.ele('width').txt(blankIfZero(width)).up();
+    cargo.ele('height').txt(blankIfZero(height)).up();
 
     const goodslines = cargo.ele('goodslines').ele('goodsline');
     goodslines.ele('unitamount').txt(normalizeQuantity(goodsUnitAmount)).up();
