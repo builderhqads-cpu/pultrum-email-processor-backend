@@ -90,13 +90,14 @@ describe('XmlService original documents packaging', () => {
     const xml = shipment.doc().end({ prettyPrint: true });
 
     expect(xml).toContain('<documents>');
-    expect(xml).toContain('<documenttype>email-original</documenttype>');
+    // TPE Standard: 19 = EMAIL (.eml), 92 = EMAIL Attachment.
+    expect(xml).toContain('<documenttype>19</documenttype>');
     expect(xml).toContain('<filename>Transport Request 003.eml</filename>');
     expect(xml).toContain('<mimetype>message/rfc822</mimetype>');
     expect(xml).toContain('<contentbase64>ZW1sLWNvbnRlbnQ=</contentbase64>');
 
-    // Attachments carry the numeric Transpas document-type code 19.
-    expect(xml).toContain('<documenttype>19</documenttype>');
+    // Attachments carry the numeric Transpas document-type code 92.
+    expect(xml).toContain('<documenttype>92</documenttype>');
     expect(xml).toContain('<filename>order.pdf</filename>');
     expect(xml).toContain('<mimetype>application/pdf</mimetype>');
     expect(xml).toContain('<contentbase64>cGRmLWNvbnRlbnQ=</contentbase64>');

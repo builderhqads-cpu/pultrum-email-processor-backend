@@ -218,7 +218,8 @@ export class XmlService {
 
     if (emailMessage.rawMimeBase64?.trim()) {
       documentEntries.push({
-        documentType: 'email-original',
+        // TPE Standard (ArtSystems, via Rick 2026-08-06): 19 = EMAIL (the .eml).
+        documentType: '19',
         fileName: this.normalizeDocumentFileName(
           emailMessage.rawMimeFileName,
           'original-email.eml',
@@ -232,8 +233,8 @@ export class XmlService {
       if (!this.isSupportedOriginalAttachment(attachment)) continue;
 
       documentEntries.push({
-        // Transpas expects a numeric document-type code; 19 = attachment.
-        documentType: '19',
+        // TPE Standard (ArtSystems, via Rick 2026-08-06): 92 = EMAIL Attachment.
+        documentType: '92',
         fileName: this.normalizeDocumentFileName(
           attachment.fileName,
           `attachment-${documentEntries.length + 1}`,
