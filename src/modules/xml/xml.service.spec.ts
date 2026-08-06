@@ -229,6 +229,10 @@ describe('XmlService generateOrderXml normalization', () => {
       '<driverinfo>Altijd lieferschein meenemen!</driverinfo>',
     );
     expect(xml).toContain('<driverinfo>Foto van pakbon maken</driverinfo>');
+    // TPE Standard element order: contact, email, phone, driverinfo, remarks.
+    expect(xml).toMatch(
+      /<contact>[\s\S]*?<email>[\s\S]*?<phone>[\s\S]*?<driverinfo>[\s\S]*?<remarks>/,
+    );
     // Rick's mapping corrections (2026-08-06):
     // invoice reference -> shipment/reference
     expect(xml).toMatch(

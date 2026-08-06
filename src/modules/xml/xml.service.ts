@@ -689,14 +689,16 @@ export class XmlService {
       .ele('country_id', { matchmode: '2' })
       .txt(this.getFieldValue(fieldMap, 'pickup_country'))
       .up();
+    // Element order matches the TPE Standard example: contact, email, phone,
+    // driverinfo, remarks.
     pickup
       .ele('contact')
       .txt(this.getFieldValue(fieldMap, 'pickup_contact'))
       .up();
-    pickup.ele('phone').txt(this.getFieldValue(fieldMap, 'pickup_phone')).up();
     pickup.ele('email').txt(this.getFieldValue(fieldMap, 'pickup_email')).up();
-    pickup.ele('remarks').txt(pickupRemarks).up();
+    pickup.ele('phone').txt(this.getFieldValue(fieldMap, 'pickup_phone')).up();
     pickup.ele('driverinfo').txt(pickupDriverInfo).up();
+    pickup.ele('remarks').txt(pickupRemarks).up();
     pickup.up();
 
     // deliveryaddress
@@ -741,15 +743,15 @@ export class XmlService {
       .txt(this.getFieldValue(fieldMap, 'delivery_contact'))
       .up();
     delivery
-      .ele('phone')
-      .txt(this.getFieldValue(fieldMap, 'delivery_phone'))
-      .up();
-    delivery
       .ele('email')
       .txt(this.getFieldValue(fieldMap, 'delivery_email'))
       .up();
-    delivery.ele('remarks').txt(deliveryRemarks).up();
+    delivery
+      .ele('phone')
+      .txt(this.getFieldValue(fieldMap, 'delivery_phone'))
+      .up();
     delivery.ele('driverinfo').txt(deliveryDriverInfo).up();
+    delivery.ele('remarks').txt(deliveryRemarks).up();
     delivery.up();
 
     // cargo
