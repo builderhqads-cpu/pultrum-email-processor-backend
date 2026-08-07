@@ -152,9 +152,13 @@ describe('XmlService generateOrderXml normalization', () => {
           customerEmail: 'customer@example.com',
           missingFields: [],
           fields: [
+            { key: 'customer_id', value: '4404' },
             { key: 'invoice_reference', value: 'INV-2026-1507' },
             { key: 'transport_type', value: 'Platte X-Lam' },
             { key: 'product_description', value: 'Constructie - Hout' },
+            { key: 'planning_note', value: 'Absatteln' },
+            { key: 'pickup_address2', value: 'Poort 3' },
+            { key: 'delivery_address2', value: 'Ingang achter' },
             { key: 'pickup_reference', value: 'PU-2026-1507' },
             { key: 'pickup_date', value: '2026-07-15' },
             { key: 'pickup_date_till', value: '2026-07-16' },
@@ -216,7 +220,7 @@ describe('XmlService generateOrderXml normalization', () => {
 
     expect(xml).toContain('<address1>Industriestraße 45</address1>');
     expect(xml).toContain('<datetill>2026-07-16</datetill>');
-    expect(xml).toContain('<loadingmeter>96.000</loadingmeter>');
+    expect(xml).toContain('<loadingmeter>96.0</loadingmeter>');
     expect(xml).toContain('<volume>737.280</volume>');
     // Both cargo AND goodsline unit_id carry matchmode="1" (Creative Gears):
     // no bare <unit_id> without the attribute.
@@ -255,6 +259,12 @@ describe('XmlService generateOrderXml normalization', () => {
     expect(xml).toContain(
       '<productdescription>Constructie - Hout</productdescription>',
     );
+    // Niek 2026-08-07: planning note -> <planningnote>; address2 mapped.
+    expect(xml).toContain('<planningnote>Absatteln</planningnote>');
+    expect(xml).toContain('<address2>Poort 3</address2>');
+    expect(xml).toContain('<address2>Ingang achter</address2>');
+    // Loading meter now to a single decimal.
+    expect(xml).toContain('<loadingmeter>96.0</loadingmeter>');
     // ediprovider_id defaults to 98 (Pultrum), matchmode 0, under <import>.
     expect(xml).toContain('<ediprovider_id matchmode="0">98</ediprovider_id>');
     // The provider sits between <import> and <transportbookings>, not inside a
@@ -268,7 +278,7 @@ describe('XmlService generateOrderXml normalization', () => {
         where: {
           orderId_key: { orderId: 'order-1', key: 'cargo_loading_meter' },
         },
-        update: expect.objectContaining({ value: '96.000' }),
+        update: expect.objectContaining({ value: '96.0' }),
       }),
     );
     expect(prisma.orderField.upsert).toHaveBeenCalledWith(
@@ -292,6 +302,7 @@ describe('XmlService generateOrderXml normalization', () => {
             customerEmail: 'customer@example.com',
             missingFields: [],
             fields: [
+              { key: 'customer_id', value: '4404' },
               { key: 'invoice_reference', value: 'INV-2026-1' },
               { key: 'pickup_date', value: '2026-07-15' },
               { key: 'pickup_address', value: 'Herengracht 182' },
@@ -351,6 +362,7 @@ describe('XmlService generateOrderXml normalization', () => {
           customerEmail: 'customer@example.com',
           missingFields: [],
           fields: [
+            { key: 'customer_id', value: '4404' },
             { key: 'invoice_reference', value: 'INV-1' },
             { key: 'pickup_date', value: '2026-07-06' },
             { key: 'pickup_address', value: 'Industriestrasse 24' },

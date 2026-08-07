@@ -53,6 +53,11 @@ export class XmlService {
     return value == null || !Number.isFinite(value) ? '' : value.toFixed(3);
   }
 
+  /** Loading meter is rounded to a single decimal (Niek). */
+  private formatLoadingMeter(value: number | null) {
+    return value == null || !Number.isFinite(value) ? '' : value.toFixed(1);
+  }
+
   private calcVolume(params: {
     length: string;
     width: string;
@@ -446,7 +451,7 @@ export class XmlService {
       fieldMap.set('cargo_volume', computedCargoVolume);
     }
 
-    const computedCargoLoadingMeter = this.formatCalculatedValue(
+    const computedCargoLoadingMeter = this.formatLoadingMeter(
       this.calcLoadingMeterCm({ length, width, unitAmount }),
     );
     let cargoLoadingMeter =
@@ -656,6 +661,11 @@ export class XmlService {
       .ele('transportkind_id', { matchmode: '1' })
       .txt(this.getFieldValue(fieldMap, 'transport_type'))
       .up();
+    // Planning note (Plannotitie) — TPE Standard <planningnote> at shipment level.
+    doc
+      .ele('planningnote')
+      .txt(this.getFieldValue(fieldMap, 'planning_note'))
+      .up();
 
     // pickupaddress
     const pickup = doc.ele('pickupaddress');
@@ -676,6 +686,10 @@ export class XmlService {
     pickup
       .ele('address1')
       .txt(this.getFieldValue(fieldMap, 'pickup_address'))
+      .up();
+    pickup
+      .ele('address2')
+      .txt(this.getFieldValue(fieldMap, 'pickup_address2'))
       .up();
     pickup
       .ele('zipcode')
@@ -725,6 +739,10 @@ export class XmlService {
     delivery
       .ele('address1')
       .txt(this.getFieldValue(fieldMap, 'delivery_address'))
+      .up();
+    delivery
+      .ele('address2')
+      .txt(this.getFieldValue(fieldMap, 'delivery_address2'))
       .up();
     delivery
       .ele('zipcode')

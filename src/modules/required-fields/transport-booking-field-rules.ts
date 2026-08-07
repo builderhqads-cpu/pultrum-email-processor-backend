@@ -40,8 +40,8 @@ export const TRANSPORT_BOOKING_FIELD_RULES: TransportBookingFieldRule[] = [
     key: 'customer_id',
     label: 'Klantnummer (customer ID)',
     xmlPath: 'transportbooking.customer_id',
-    requirement: OPTIONAL,
-    conditional: true,
+    // Required field (Niek 2026-08-07). For Derix it comes from the profile.
+    requirement: REQUIRED,
     aliases: ['customer id', 'customer_id', 'klantnummer', 'client id'],
   },
   {
@@ -54,6 +54,15 @@ export const TRANSPORT_BOOKING_FIELD_RULES: TransportBookingFieldRule[] = [
     xmlPath: 'transportbooking.opdrachtgever',
     requirement: OPTIONAL,
     aliases: ['opdrachtgever', 'principal', 'ordering party', 'contratante'],
+  },
+  {
+    // Planning note (NL: Plannotitie). TPE Standard <planningnote> at shipment
+    // level; shown under Algemeen (Niek 2026-08-07).
+    key: 'planning_note',
+    label: 'Plannotitie',
+    xmlPath: 'transportbooking.shipments.shipment.planningnote',
+    requirement: OPTIONAL,
+    aliases: ['plannotitie', 'planningnote', 'planning note', 'plannotities'],
   },
   {
     key: 'shipment_edireference',

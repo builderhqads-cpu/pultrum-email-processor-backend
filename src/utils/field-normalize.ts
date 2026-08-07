@@ -172,13 +172,15 @@ export function blankIfZero(value: string | null | undefined): string {
  */
 export function roundMeasureBlankIfZero(
   value: string | null | undefined,
+  decimals = 2,
 ): string {
   const v = (value ?? '').toString().trim();
   if (!v) return '';
   const n = Number(v.replace(',', '.'));
   if (!Number.isFinite(n)) return v; // non-numeric -> keep
   if (n === 0) return '';
-  return String(Math.round(n * 100) / 100);
+  const factor = Math.pow(10, decimals);
+  return String(Math.round(n * factor) / factor);
 }
 
 /**
@@ -276,10 +278,12 @@ export function normalizeFieldMap(map: Map<string, string>): void {
   }
   for (const key of ZERO_TO_BLANK_KEYS) {
     if (!map.has(key)) continue;
+    // Loading meter to 1 decimal, volume to 2 (Niek).
+    const isLoadingMeter = key.endsWith('loading_meter');
     map.set(
       key,
       DECIMAL_MEASURE_KEYS.has(key)
-        ? roundMeasureBlankIfZero(map.get(key))
+        ? roundMeasureBlankIfZero(map.get(key), isLoadingMeter ? 1 : 2)
         : blankIfZero(map.get(key)),
     );
   }

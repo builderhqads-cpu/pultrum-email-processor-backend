@@ -267,7 +267,7 @@ describe('field-normalize', () => {
       expect(map.get('delivery_city')).toBe('Best');
     });
 
-    it('rounds volume/loading-meter to 2 decimals without inflating (14.648 -> 14.65)', () => {
+    it('rounds volume to 2 decimals, loading meter to 1 (Niek), without inflating', () => {
       const map = new Map<string, string>([
         ['cargo_volume', '14.648'], // AI international decimal (was inflated to 14648)
         ['goods_volume', '14,648'], // German comma
@@ -276,7 +276,8 @@ describe('field-normalize', () => {
       normalizeFieldMap(map);
       expect(map.get('cargo_volume')).toBe('14.65');
       expect(map.get('goods_volume')).toBe('14.65');
-      expect(map.get('cargo_loading_meter')).toBe('13.78');
+      // Loading meter now to a single decimal.
+      expect(map.get('cargo_loading_meter')).toBe('13.8');
     });
 
     it('rounds weight to whole kilos (decimals dropped)', () => {
