@@ -107,6 +107,38 @@ export type AiExtractionResult = {
   rawResponse: any;
 };
 
+/** Normalize a field key/alias for loose matching (case/separator-insensitive). */
+function normalizeFieldKey(key: string): string {
+  return key.toLowerCase().replace(/[\s_-]+/g, '');
+}
+
+/** Canonical field keys, for a fast "is this already correct?" check. */
+const CANONICAL_FIELD_KEYS = new Set(
+  TRANSPORT_BOOKING_FIELD_RULES.map((r) => r.key),
+);
+
+/**
+ * Maps a normalized key OR alias onto its canonical field key. The AI follows
+ * per-customer profile instructions that name a field by its label (e.g.
+ * "Plannotitie"), so it can return a label-derived key ("plannotitie") instead
+ * of our canonical one ("planning_note"). Without this fold the value is
+ * silently dropped downstream, where only canonical keys are recognized.
+ * Canonical keys are registered first so an alias can never shadow a real key.
+ */
+const AI_FIELD_KEY_ALIASES: Map<string, string> = (() => {
+  const map = new Map<string, string>();
+  for (const rule of TRANSPORT_BOOKING_FIELD_RULES) {
+    map.set(normalizeFieldKey(rule.key), rule.key);
+  }
+  for (const rule of TRANSPORT_BOOKING_FIELD_RULES) {
+    for (const alias of rule.aliases ?? []) {
+      const norm = normalizeFieldKey(alias);
+      if (norm && !map.has(norm)) map.set(norm, rule.key);
+    }
+  }
+  return map;
+})();
+
 @Injectable()
 export class AiExtractionService {
   private readonly logger = new Logger(AiExtractionService.name);
@@ -903,7 +935,14 @@ export class AiExtractionService {
     for (const [k, v] of Object.entries(fields)) {
       if (v == null) continue;
       const s = sanitizeExtractedValue(String(v)).trim();
-      if (s) out[k] = s;
+      if (!s) continue;
+      // Fold a label-derived key (e.g. "plannotitie") onto its canonical field
+      // key ("planning_note"). Canonical keys pass through untouched; only an
+      // unrecognized key is looked up in the alias index.
+      const key = CANONICAL_FIELD_KEYS.has(k)
+        ? k
+        : (AI_FIELD_KEY_ALIASES.get(normalizeFieldKey(k)) ?? k);
+      out[key] = s;
     }
     return out;
   }

@@ -528,4 +528,34 @@ describe('AiExtractionService', () => {
     expect(tx.orderField.upsert).toHaveBeenCalled();
     expect(tx.missingField.createMany).not.toHaveBeenCalled();
   });
+
+  it('folds label-derived AI keys onto their canonical field key', () => {
+    const service = new AiExtractionService(
+      { get: jest.fn() } as any,
+      {} as any,
+      { log: jest.fn() } as any,
+      { resolveZipcodeHints: jest.fn(async () => []) } as any,
+    );
+
+    // The eml-process router follows profile instructions that name the field
+    // by label, so it returns "plannotitie" instead of "planning_note".
+    const analysis = (service as any).parseEmailAnalysis({
+      isTransportOrder: true,
+      confidence: 0.97,
+      orders: [
+        {
+          externalReference: '26TR001814',
+          fields: {
+            plannotitie: 'Absatteln',
+            delivery_address2: 'Baustelle',
+          },
+        },
+      ],
+    });
+
+    expect(analysis.orders[0].fields.planning_note).toBe('Absatteln');
+    expect(analysis.orders[0].fields.plannotitie).toBeUndefined();
+    // A key that is already canonical must pass through untouched.
+    expect(analysis.orders[0].fields.delivery_address2).toBe('Baustelle');
+  });
 });
