@@ -45,10 +45,27 @@ const normalizeEmail = (value: string) => value.trim().toLowerCase();
 const normalizeValue = (value: string) => value.trim();
 const EMAIL_FORMAT_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Fields whose group can't be derived from the key prefix (Niek 2026-08-07).
+const PICKUP_EXTRA = new Set(['neutral_pickup_address', 'neutral_loading']);
+const DELIVERY_EXTRA = new Set(['neutral_delivery_address', 'neutral_unloading']);
+const CARGO_EXTRA = new Set([
+  'length',
+  'width',
+  'height',
+  'product_id',
+  'product_description',
+  'pallet_places',
+  'adr_class',
+  'dangerous_goods',
+  'product_instructions',
+  'adr',
+]);
+
 function fieldGroup(key: string) {
-  if (key.startsWith('pickup_')) return 'pickup';
-  if (key.startsWith('delivery_')) return 'delivery';
-  if (key.startsWith('cargo_') || key.startsWith('goods_')) return 'cargo';
+  if (key.startsWith('pickup_') || PICKUP_EXTRA.has(key)) return 'pickup';
+  if (key.startsWith('delivery_') || DELIVERY_EXTRA.has(key)) return 'delivery';
+  if (key.startsWith('cargo_') || key.startsWith('goods_') || CARGO_EXTRA.has(key))
+    return 'cargo';
   return 'general';
 }
 
