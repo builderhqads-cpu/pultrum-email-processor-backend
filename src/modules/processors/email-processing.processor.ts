@@ -900,20 +900,23 @@ export class EmailProcessingProcessor extends WorkerHost {
 
     // For a batch reply we don't enqueue per-order jobs (that would re-send one
     // e-mail per still-incomplete order); we re-run the consolidated step below.
+    let singleReplyValidation: { missingFields: unknown[] } | null = null;
     for (const { order, fields } of pending.values()) {
-      await this.transportBookingValidationService.validateOrderFromFieldValues(
-        {
-          orderId: order.id,
-          emailMessageId: order.emailMessageId,
-          emailSubject:
-            order.emailMessage?.subject ??
-            existingOrder.emailMessage?.subject ??
-            '',
-          fieldValues: fields,
-          source: 'ai',
-        },
-        { enqueueJobs: !isBatchReply },
-      );
+      const validation =
+        await this.transportBookingValidationService.validateOrderFromFieldValues(
+          {
+            orderId: order.id,
+            emailMessageId: order.emailMessageId,
+            emailSubject:
+              order.emailMessage?.subject ??
+              existingOrder.emailMessage?.subject ??
+              '',
+            fieldValues: fields,
+            source: 'ai',
+          },
+          { enqueueJobs: !isBatchReply },
+        );
+      singleReplyValidation = validation;
     }
 
     if (isBatchReply) {
@@ -942,6 +945,18 @@ export class EmailProcessingProcessor extends WorkerHost {
           }
         }
       }
+    } else if ((singleReplyValidation?.missingFields?.length ?? 0) > 0) {
+      // Single (non-batch) order still incomplete after this reply. The
+      // ai-request job enqueued above is silently deduped by BullMQ (same jobId
+      // as the original request), so the draft would never refresh. Regenerate
+      // it directly for whatever is STILL missing — mirroring the batch branch.
+      await this.aiReplyService
+        .generateMissingInfoReply(existingOrder.id)
+        .catch((err: any) =>
+          this.logger.warn(
+            `Single follow-up reply failed orderId=${existingOrder.id}: ${err?.message ?? err}`,
+          ),
+        );
     }
 
     // Record the /eml-process call (reply) on the order for the panel.

@@ -269,7 +269,15 @@ export class AiReplyService {
         typeof parsed.subject === 'string' ? parsed.subject : '';
       const suggestedBody = typeof parsed.body === 'string' ? parsed.body : '';
 
-      const cleanedBody = this.normalizeDraftBody(suggestedBody || '');
+      // The reply route sometimes returns 200 with an unparseable/empty body
+      // (e.g. it echoes the extraction JSON). Never persist a blank draft — fall
+      // back to a deterministic template listing the missing fields, mirroring
+      // the consolidated path's fallback.
+      const templateBody = this.singleTemplateBody(
+        payload.missingFields.map((m) => ({ label: m.label })),
+        payload.language,
+      );
+      const cleanedBody = this.normalizeDraftBody(suggestedBody || templateBody);
       const cleanedSubject = sanitizeExtractedValue(suggestedSubject || '');
 
       const finalSubject = this.ensureTokenInSubject(
@@ -578,6 +586,38 @@ export class AiReplyService {
       pt: 'Informações adicionais necessárias para seus pedidos de transporte',
     };
     return map[language] ?? map.nl;
+  }
+
+  private singleTemplateBody(
+    missingFields: Array<{ label: string }>,
+    language: string,
+  ) {
+    const copy: Record<string, { intro: string; outro: string }> = {
+      nl: {
+        intro:
+          'Beste,\n\nOm uw transportopdracht te kunnen verwerken, ontbreken nog enkele gegevens. Kunt u de onderstaande informatie aanvullen?',
+        outro:
+          'Alvast bedankt voor uw aanvulling.\n\nMet vriendelijke groet,\nPultrum',
+      },
+      de: {
+        intro:
+          'Guten Tag,\n\num Ihren Transportauftrag bearbeiten zu können, fehlen noch einige Angaben. Können Sie die unten genannten Informationen ergänzen?',
+        outro: 'Vielen Dank im Voraus.\n\nMit freundlichen Grüßen,\nPultrum',
+      },
+      en: {
+        intro:
+          'Hello,\n\nTo process your transport order, some information is still missing. Could you complete the details below?',
+        outro: 'Thank you in advance.\n\nKind regards,\nPultrum',
+      },
+      pt: {
+        intro:
+          'Olá,\n\nPara processar o seu pedido de transporte, ainda faltam algumas informações. Poderia completar os dados abaixo?',
+        outro: 'Desde já agradecemos.\n\nAtenciosamente,\nPultrum',
+      },
+    };
+    const t = copy[language] ?? copy.nl;
+    const lines = missingFields.map((m) => `   - ${m.label}`).join('\n');
+    return `${t.intro}\n\n${lines}\n\n${t.outro}`;
   }
 
   private consolidatedTemplateBody(
