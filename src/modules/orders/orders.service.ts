@@ -576,7 +576,13 @@ export class OrdersService {
       where: { id },
       include: {
         emailMessage: {
-          select: { id: true, graphMessageId: true, subject: true },
+          select: {
+            id: true,
+            graphMessageId: true,
+            subject: true,
+            bodyText: true,
+            attachments: { select: { extractedText: true } },
+          },
         },
         fields: { select: { key: true, value: true } },
       },
@@ -626,57 +632,33 @@ export class OrdersService {
       return { enqueued: false, reprocessedOrder: true };
     }
 
-    // Single order: wipe and re-run the whole email pipeline from scratch.
-    const cleanup = await this.prismaService.$transaction(async (tx) => {
-      const missingFields = await tx.missingField.deleteMany({
-        where: { orderId: order.id },
-      });
-      const orderFields = await tx.orderField.deleteMany({
-        where: { orderId: order.id },
-      });
-      const aiRequests = await tx.aiRequest.deleteMany({
-        where: { orderId: order.id },
-      });
-      const xmlDeliveries = await tx.xmlDelivery.deleteMany({
-        where: { orderId: order.id },
-      });
+    // Single order: NON-destructive re-fill from the email content (body +
+    // already-extracted attachment text). We do NOT wipe the fields or re-run
+    // the whole .eml pipeline from scratch, so values merged from customer
+    // replies (e.g. a delivery date/zipcode supplied in a reply) survive a
+    // reprocess. Same guarantee the batch path already gives: add, never lose.
+    const combinedText = [
+      order.emailMessage?.bodyText ?? '',
+      ...(order.emailMessage?.attachments ?? []).map((a) => a.extractedText ?? ''),
+    ]
+      .map((t) => (t ?? '').toString().trim())
+      .filter((t) => t.length > 0)
+      .join('\n\n');
 
-      await tx.transportOrder.update({
-        where: { id: order.id },
-        data: { status: OrderStatus.PROCESSING, overallConfidence: null },
-      });
+    await this.refillOrderFromText(order, existingFields, combinedText);
 
-      await tx.auditLog.create({
-        data: {
-          entityType: 'TransportOrder',
-          entityId: order.id,
-          action: 'ORDER_REPROCESSED',
-          detailsJson: {
-            emailMessageId: order.emailMessageId,
-            deleted: {
-              missingFields: missingFields.count,
-              orderFields: orderFields.count,
-              aiRequests: aiRequests.count,
-              xmlDeliveries: xmlDeliveries.count,
-            },
-          } as any,
-        },
-      });
-
-      return {
-        missingFields: missingFields.count,
-        orderFields: orderFields.count,
-        aiRequests: aiRequests.count,
-        xmlDeliveries: xmlDeliveries.count,
-      };
+    await this.auditLogService.log({
+      entityType: 'TransportOrder',
+      entityId: order.id,
+      action: 'ORDER_REPROCESSED',
+      detailsJson: {
+        emailMessageId: order.emailMessageId,
+        mode: 'non_destructive_refill',
+        preservedFields: Object.keys(existingFields).length,
+      } as any,
     });
 
-    await this.emailProcessingQueue.add('process-email', {
-      emailMessageId: order.emailMessageId,
-      graphMessageId: order.emailMessage.graphMessageId,
-    });
-
-    return { enqueued: true, cleanup };
+    return { enqueued: false, reprocessedOrder: true };
   }
 
   /** Re-fill a single batch order from its stored rawOrderText (no siblings). */
@@ -691,7 +673,30 @@ export class OrdersService {
     },
     existingFields: Record<string, string>,
   ): Promise<void> {
-    const text = order.rawOrderText ?? '';
+    return this.refillOrderFromText(
+      order,
+      existingFields,
+      order.rawOrderText ?? '',
+    );
+  }
+
+  /**
+   * Non-destructive re-fill of ONE order from the given source text: the AI only
+   * FILLS empty fields, existing values (incl. data merged from customer
+   * replies) are always kept, and the single write means a failed AI call can
+   * never gut the order. Shared by batch- and single-order reprocess.
+   */
+  private async refillOrderFromText(
+    order: {
+      id: string;
+      emailMessageId: string;
+      customerEmail: string;
+      department: Department;
+      emailMessage: { subject?: string | null } | null;
+    },
+    existingFields: Record<string, string>,
+    text: string,
+  ): Promise<void> {
     const profile = this.clientProfileService.resolve({
       fromEmail: order.customerEmail,
       text,
