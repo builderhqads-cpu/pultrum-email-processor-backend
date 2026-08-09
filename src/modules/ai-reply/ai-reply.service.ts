@@ -63,6 +63,17 @@ export class AiReplyService {
     return s || 'Aanvullende informatie nodig';
   }
 
+  /**
+   * "Re: <subject>" so the reply stays on the original mail thread. Never a
+   * fresh subject — Gmail would split it into a new conversation and a customer
+   * reply could then fail to link back to this order.
+   */
+  private threadedReplySubject(originalSubject?: string | null) {
+    const s = (originalSubject || '').toString().trim();
+    if (!s) return 'Aanvullende informatie nodig';
+    return /^re:\s*/i.test(s) ? s : `Re: ${s}`;
+  }
+
   private normalizeDraftBody(body: string) {
     return normalizeEscapedNewlines(body || '')
       .replace(/\r\n/g, '\n')
@@ -280,8 +291,12 @@ export class AiReplyService {
       const cleanedBody = this.normalizeDraftBody(suggestedBody || templateBody);
       const cleanedSubject = sanitizeExtractedValue(suggestedSubject || '');
 
+      // Keep the reply ON the original thread. A fresh subject like
+      // "Aanvullende informatie nodig" makes Gmail split it into a NEW
+      // conversation (even though Graph sets the RFC references), so a fallback
+      // subject must stay "Re: <original subject>".
       const finalSubject = this.ensureTokenInSubject(
-        cleanedSubject || `Aanvullende informatie nodig - [${token}]`,
+        cleanedSubject || this.threadedReplySubject(email.subject),
         token,
       );
       const finalBody = this.ensureTokenInBody(cleanedBody, token);
