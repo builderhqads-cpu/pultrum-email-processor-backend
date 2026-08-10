@@ -32,6 +32,12 @@ export class EmailsController {
     return this.emailsService.processAnyway(id);
   }
 
+  // Bulk delete: DELETE /emails (distinct path from DELETE /emails/:id).
+  @Delete()
+  removeAll() {
+    return this.emailsService.removeAll();
+  }
+
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.emailsService.remove(id);

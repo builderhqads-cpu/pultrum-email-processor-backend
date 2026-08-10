@@ -201,6 +201,17 @@ export class EmailsService {
     };
   }
 
+  /**
+   * Delete ALL emails. Because TransportOrder and BatchImport both cascade on
+   * their emailMessage FK, this also removes every order, batch, attachment and
+   * their children in one shot. Client profiles, mailboxes and users are NOT
+   * touched (they don't reference EmailMessage). Auth-guarded at the controller.
+   */
+  async removeAll() {
+    const result = await this.prismaService.emailMessage.deleteMany({});
+    return { deleted: result.count };
+  }
+
   async remove(id: string) {
     const email = await this.prismaService.emailMessage.findUnique({
       where: { id },
