@@ -46,8 +46,18 @@ const normalizeValue = (value: string) => value.trim();
 const EMAIL_FORMAT_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Fields whose group can't be derived from the key prefix (Niek 2026-08-07).
-const PICKUP_EXTRA = new Set(['neutral_pickup_address', 'neutral_loading']);
-const DELIVERY_EXTRA = new Set(['neutral_delivery_address', 'neutral_unloading']);
+// driver_*_info start with "driver_", not "pickup_"/"delivery_", so they'd fall
+// into 'general'. Niek/Sander: Chauffeur laadinfo -> Laden, losinfo -> Lossen.
+const PICKUP_EXTRA = new Set([
+  'neutral_pickup_address',
+  'neutral_loading',
+  'driver_pickup_info',
+]);
+const DELIVERY_EXTRA = new Set([
+  'neutral_delivery_address',
+  'neutral_unloading',
+  'driver_delivery_info',
+]);
 const CARGO_EXTRA = new Set([
   'length',
   'width',
