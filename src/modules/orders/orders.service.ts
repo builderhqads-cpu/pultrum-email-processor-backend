@@ -264,6 +264,13 @@ export class OrdersService {
         externalReference: true,
         createdAt: true,
         updatedAt: true,
+        // Niek: show the factuurreferentie as the order's reference (easier to
+        // search than the laadreferentie/TR-number).
+        fields: {
+          where: { key: 'invoice_reference' },
+          select: { value: true },
+          take: 1,
+        },
         _count: {
           select: {
             missingFields: true,
@@ -294,10 +301,11 @@ export class OrdersService {
       }
     }
 
-    return orders.map(({ _count, ...order }) => {
+    return orders.map(({ _count, fields, ...order }) => {
       const lastAudit = lastAuditByOrder.get(order.id) ?? null;
       return {
         ...order,
+        invoiceReference: fields?.[0]?.value ?? null,
         missingFieldsCount: _count.missingFields,
         lastAudit: lastAudit
           ? {
