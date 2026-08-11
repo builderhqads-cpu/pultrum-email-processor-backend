@@ -44,6 +44,30 @@ type CustomerProfileRecord = Awaited<
 const normalizeEmail = (value: string) => value.trim().toLowerCase();
 const normalizeValue = (value: string) => value.trim();
 const EMAIL_FORMAT_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// A bare domain (no local part), e.g. "derix.de". Niek: an extra-email entry
+// may be a whole domain so any sender from that company matches the profile.
+const DOMAIN_FORMAT_RE = /^[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Split profile-match entries into full e-mails and bare domains. Domain
+ * entries are stored as "@domain"; here the leading "@" is stripped so they
+ * land in `match.domains` (which only matches the direct sender — see matches()).
+ * Entries without a leading "@" stay as exact e-mail matches (unchanged).
+ */
+function buildProfileMatch(entries: Array<string | null | undefined>): {
+  emails: string[];
+  domains: string[];
+} {
+  const emails: string[] = [];
+  const domains: string[] = [];
+  for (const raw of entries) {
+    const entry = (raw ?? '').toLowerCase().trim();
+    if (!entry) continue;
+    if (entry.startsWith('@')) domains.push(entry.slice(1));
+    else emails.push(entry);
+  }
+  return { emails, domains };
+}
 
 // Fields whose group can't be derived from the key prefix (Niek 2026-08-07).
 // driver_*_info start with "driver_", not "pickup_"/"delivery_", so they'd fall
@@ -162,9 +186,10 @@ export class ClientProfileService implements OnModuleInit {
       this.databaseProfiles = profiles.map((profile) => ({
       id: profile.id,
       name: profile.name,
-      match: {
-        emails: [profile.contactEmail, ...profile.emails.map((entry) => entry.email)],
-      },
+      match: buildProfileMatch([
+        profile.contactEmail,
+        ...profile.emails.map((entry) => entry.email),
+      ]),
       fixedFields: toFieldMap(profile.fields),
       aiInstructions: normalizeValue(profile.aiInstructions ?? '') || undefined,
       notes: profile.notes ?? undefined,
@@ -747,16 +772,23 @@ export class ClientProfileService implements OnModuleInit {
           'Customer profile additional contact emails are invalid.',
         );
       }
-      const email = normalizeEmail(entry);
-      if (!EMAIL_FORMAT_RE.test(email)) {
-        throw new BadRequestException(
-          `Customer profile additional contact email is invalid: ${entry}`,
-        );
-      }
-      if (primaryEmail && email === primaryEmail) {
+      const value = normalizeEmail(entry);
+      if (EMAIL_FORMAT_RE.test(value)) {
+        // A full e-mail address (current behaviour, unchanged).
+        if (primaryEmail && value === primaryEmail) continue;
+        normalized.add(value);
         continue;
       }
-      normalized.add(email);
+      // Otherwise accept a bare domain ("derix.de" or "@derix.de") and store it
+      // canonically as "@derix.de" so matching can tell it apart from an e-mail.
+      const domain = value.replace(/^@/, '');
+      if (DOMAIN_FORMAT_RE.test(domain)) {
+        normalized.add(`@${domain}`);
+        continue;
+      }
+      throw new BadRequestException(
+        `Customer profile additional contact email is invalid: ${entry}`,
+      );
     }
 
     return [...normalized.values()];

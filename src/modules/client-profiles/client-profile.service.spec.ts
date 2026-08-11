@@ -73,4 +73,56 @@ describe('ClientProfileService', () => {
     // Transportsoort value map.
     expect(fields.transport_type).toBe('Platte X-Lam');
   });
+
+  // --- Niek #8: match a whole DOMAIN in the extra emails ---
+
+  it('resolves a DB profile by the sender domain (bare-domain entry)', () => {
+    const svc = new ClientProfileService({ get: () => 'false' } as any);
+    (svc as any).databaseProfiles = [
+      { id: 'acme', name: 'ACME', match: { emails: [], domains: ['acme-co.com'] }, fixedFields: {} },
+    ];
+    expect(svc.resolve({ fromEmail: 'anyone@acme-co.com' })?.id).toBe('acme');
+    expect(svc.resolve({ fromEmail: 'boss@acme-co.com' })?.id).toBe('acme');
+    expect(svc.resolve({ fromEmail: 'someone@other.com' })).toBeNull();
+  });
+
+  it('a domain matches ONLY the direct sender, never a random body address', () => {
+    const svc = new ClientProfileService({ get: () => 'false' } as any);
+    (svc as any).databaseProfiles = [
+      { id: 'acme', name: 'ACME', match: { emails: [], domains: ['acme-co.com'] }, fixedFields: {} },
+    ];
+    // sender is a different domain; body mentions an acme-co.com address
+    const p = svc.resolve({
+      fromEmail: 'someone@else.com',
+      bodyText: 'you can reach us at info@acme-co.com',
+    });
+    expect(p).toBeNull();
+  });
+
+  it('a profile without a domain entry does NOT match the whole domain (unchanged)', () => {
+    const svc = new ClientProfileService({ get: () => 'false' } as any);
+    (svc as any).databaseProfiles = [
+      { id: 'acme', name: 'ACME', match: { emails: ['orders@acme-co.com'], domains: [] }, fixedFields: {} },
+    ];
+    expect(svc.resolve({ fromEmail: 'orders@acme-co.com' })?.id).toBe('acme');
+    expect(svc.resolve({ fromEmail: 'other@acme-co.com' })).toBeNull();
+  });
+
+  it('accepts a bare domain in additional emails and stores it as @domain', () => {
+    const svc = new ClientProfileService({ get: () => 'false' } as any);
+    const out = (svc as any).normalizeAdditionalContactEmails(
+      ['derix.de', '@acme-co.com', 'user@derix.de'],
+      'primary@x.com',
+    );
+    expect(out).toContain('@derix.de');
+    expect(out).toContain('@acme-co.com');
+    expect(out).toContain('user@derix.de');
+  });
+
+  it('still rejects a truly invalid additional entry', () => {
+    const svc = new ClientProfileService({ get: () => 'false' } as any);
+    expect(() =>
+      (svc as any).normalizeAdditionalContactEmails(['invalidentry'], 'p@x.com'),
+    ).toThrow();
+  });
 });
