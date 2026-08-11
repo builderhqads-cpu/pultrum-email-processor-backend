@@ -448,21 +448,12 @@ export class EmailProcessingProcessor extends WorkerHost {
       emailSubject: email.subject,
       fieldValues: profileFields,
     });
-    // Text from attachments the router can't parse itself (spreadsheets — see
-    // extractAttachmentTextIfNeeded). In the AI flow only those are extracted,
-    // so this carries the .xlsx order data the raw .eml alone doesn't surface.
-    const attachmentsText =
-      (email.attachments ?? [])
-        .map((attachment) => (attachment.extractedText ?? '').toString().trim())
-        .filter((text) => text.length > 0)
-        .join('\n\n') || null;
     const analysis = await this.aiExtractionService.analyzeEmail(eml, {
       detectedFields: [
         ...this.toProfileDetectedFields(profileFields),
         ...preDetectedZipcodes,
       ],
       customerProfile: this.toCustomerProfileContext(clientProfile),
-      attachmentsText,
     });
     if (!analysis) {
       throw new Error(`AI analysis returned null for emailMessageId=${email.id}`);
@@ -1250,46 +1241,22 @@ export class EmailProcessingProcessor extends WorkerHost {
   }
 
   private async extractAttachmentTextIfNeeded(emailMessage: any) {
+    // New flow: the AI parses the .eml (incl. attachments) on its side, so our
+    // OCR/text extraction is redundant. We still download/store the attachment
+    // bytes for the panel — only the costly text extraction is skipped here.
+    if (this.aiEmailAnalysisEnabled()) return;
+
     const attachments = (emailMessage?.attachments ?? []) as Array<{
       id: string;
-      fileName?: string | null;
-      mimeType?: string | null;
       extractedText?: string | null;
     }>;
     if (!attachments.length) return;
 
-    // New flow: the AI router parses the .eml (incl. attachments) on its side,
-    // so our OCR/text extraction is normally redundant. EXCEPT spreadsheets:
-    // the router does not parse .xlsx, so those emails produce no orders unless
-    // we extract the sheet to text and forward it (Niek #10 — Selekthuis/Nijhuis).
-    const aiFlow = this.aiEmailAnalysisEnabled();
-
     for (const att of attachments) {
       if (!att?.id) continue;
       if (att.extractedText && att.extractedText.trim()) continue;
-      // In the AI flow extract ONLY spreadsheets; skip the costly PDF/image OCR
-      // the router already handles from the raw .eml.
-      if (aiFlow && !this.isSpreadsheetAttachment(att.fileName, att.mimeType)) {
-        continue;
-      }
       await this.attachmentParserService.extractTextFromAttachment(att.id);
     }
-  }
-
-  /** True for .xls/.xlsx spreadsheets — the one attachment type the AI router
-   *  does not parse from the raw .eml, so we extract + forward its text. */
-  private isSpreadsheetAttachment(
-    fileName?: string | null,
-    mimeType?: string | null,
-  ): boolean {
-    const name = (fileName ?? '').toLowerCase();
-    const mime = (mimeType ?? '').toLowerCase();
-    return (
-      name.endsWith('.xlsx') ||
-      name.endsWith('.xls') ||
-      mime.includes('spreadsheetml') ||
-      mime === 'application/vnd.ms-excel'
-    );
   }
 
   private buildCombinedText(input: {

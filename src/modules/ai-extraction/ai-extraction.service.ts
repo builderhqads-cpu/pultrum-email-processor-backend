@@ -806,8 +806,6 @@ export class AiExtractionService {
     options?: {
       detectedFields?: AiPreDetectedField[];
       customerProfile?: AiCustomerProfileContext | null;
-      /** Text from attachments the router can't parse itself (spreadsheets). */
-      attachmentsText?: string | null;
     },
   ): Promise<AiEmailAnalysis | null> {
     const url = this.resolveEmlProcessUrl();
@@ -854,11 +852,6 @@ export class AiExtractionService {
         // documents). Only sent when the profile actually carries hints.
         ...(options?.customerProfile?.instructions
           ? { customerProfile: options.customerProfile }
-          : {}),
-        // Pre-extracted text for attachments the router can't parse from the raw
-        // .eml (spreadsheets) — so .xlsx order data still reaches it (Niek #10).
-        ...(options?.attachmentsText && options.attachmentsText.trim()
-          ? { attachmentsText: options.attachmentsText }
           : {}),
       };
 
