@@ -61,10 +61,6 @@ export const derixWesterkappelnProfile: ClientProfile = {
   // Deellading: meerdere LT-regels binnen een TR-blok = meerdere orders.
   split: { mode: 'deterministic', strategy: 'derix-tr-lt' },
 
-  // Sheet dimensions are in millimeters when whole ("240" = 240 mm = 24 cm) and
-  // in meters when decimal ("2.40" = 2.40 m = 240 cm). See notes below (Niek).
-  dimensionUnit: 'de-mm-or-m',
-
   // Withagen (route R103) should be excluded, but Niek still has to confirm /
   // add it to the mapping before we activate the rule. Left inert on purpose.
   exclude: {

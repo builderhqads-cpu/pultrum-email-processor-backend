@@ -75,15 +75,6 @@ export interface ClientProfile {
     partnerPatterns?: string[];
   };
 
-  /**
-   * How bare (unit-less) cargo dimensions in this client's document should be
-   * read. 'de-mm-or-m' (Derix German sheets): a WHOLE number is millimeters
-   * (÷10 -> cm), a DECIMAL is meters (×100 -> cm) — e.g. "240" -> 24 cm,
-   * "2.40" -> 240 cm. Values that carry an explicit unit token are left to the
-   * generic centimeter conversion.
-   */
-  dimensionUnit?: 'de-mm-or-m';
-
   /** Free-text notes for operators / future reference. */
   notes?: string;
 }
