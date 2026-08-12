@@ -33,7 +33,10 @@ import { AiReplyService } from '../ai-reply/ai-reply.service';
 import { AddressEnrichmentService } from '../geocoding/address-enrichment.service';
 import type { SplitResult } from '../order-split/order-split.types';
 import { sanitizeExtractedValue } from '../../utils/sanitize';
-import { routeTimeBounds } from '../../utils/field-normalize';
+import {
+  dimensionByProfileToCm,
+  routeTimeBounds,
+} from '../../utils/field-normalize';
 import {
   isExcludedParty,
   parseExcludedPartyNames,
@@ -674,6 +677,22 @@ export class EmailProcessingProcessor extends WorkerHost {
           ...(o.unmappedFields ?? {}),
           ...mergedKnownFields,
         };
+
+        // Niek: Derix sheet dimensions are in millimeters when whole ("240" ->
+        // 24 cm) and in meters when decimal ("2.40" -> 240 cm). Apply that
+        // client-specific reading to bare dimension values before the generic
+        // cm conversion runs (values that already carry a unit are left alone).
+        if (clientProfile?.dimensionUnit) {
+          for (const key of ['length', 'width', 'height']) {
+            const cm = dimensionByProfileToCm(
+              finalFields[key as keyof typeof finalFields] as string | undefined,
+              clientProfile.dimensionUnit,
+            );
+            if (cm != null) {
+              (finalFields as Record<string, string>)[key] = cm;
+            }
+          }
+        }
 
         await this.transportBookingValidationService.validateOrderFromFieldValues(
           {

@@ -140,6 +140,30 @@ export function roundWholeCm(value: string | null | undefined): string {
 }
 
 /**
+ * Convert a bare (unit-less) cargo dimension to whole centimeters using a
+ * client-specific convention. 'de-mm-or-m' (Derix German sheets, Niek): a WHOLE
+ * number is millimeters (÷10), a DECIMAL is meters (×100) — e.g. "240" -> 24,
+ * "2.40" -> 240, "16.031" -> 1603. Returns null when the value carries an
+ * explicit unit token (leave it to toCentimeters) or can't be parsed, so the
+ * caller keeps the original value.
+ */
+export function dimensionByProfileToCm(
+  value: string | null | undefined,
+  mode: 'de-mm-or-m',
+): string | null {
+  if (value == null) return null;
+  const s = value.toString().trim();
+  // A unit token (mm/cm/m) or any other text -> let the generic path decide.
+  if (!s || /[a-z]/i.test(s)) return null;
+  const n = parseDecimal(s);
+  if (n == null) return null;
+  // mode is a single convention today; kept as a param for future clients.
+  void mode;
+  const cm = Number.isInteger(n) ? n / 10 : n * 100;
+  return String(Math.round(cm));
+}
+
+/**
  * Derix reference format (Niek): a code + an LT-number must be joined with a
  * dash, e.g. "26TR001853 LT01" -> "26TR001853-LT01". Only the whitespace right
  * before a trailing LT-token is replaced; other references are untouched.

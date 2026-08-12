@@ -2,6 +2,7 @@ import {
   blankIfZero,
   blankIfZeroPreservingDecimalString,
   dashLtReference,
+  dimensionByProfileToCm,
   dropNameIfCity,
   normalizeFieldMap,
   normalizeQuantity,
@@ -295,6 +296,35 @@ describe('field-normalize', () => {
       normalizeFieldMap(map);
       expect(map.get('cargo_weight')).toBe('6592');
       expect(map.get('goods_weight')).toBe('6130');
+    });
+  });
+
+  describe('dimensionByProfileToCm (Derix de-mm-or-m)', () => {
+    const cm = (v: string | null | undefined) =>
+      dimensionByProfileToCm(v, 'de-mm-or-m');
+
+    it('reads a whole number as millimeters (÷10)', () => {
+      expect(cm('240')).toBe('24'); // Niek: 240 mm = 24 cm
+      expect(cm('240,00')).toBe('24'); // German ,00 decimals
+      expect(cm('16.031,00')).toBe('1603'); // 16031 mm = 1603 cm
+      expect(cm('16.031')).toBe('1603'); // German thousands
+    });
+
+    it('reads a decimal as meters (×100)', () => {
+      expect(cm('2.40')).toBe('240'); // Niek: 2.40 m = 240 cm
+      expect(cm('2,40')).toBe('240'); // German comma decimal
+    });
+
+    it('leaves a value with an explicit unit to the generic path (null)', () => {
+      expect(cm('16031 mm')).toBeNull();
+      expect(cm('2.40 m')).toBeNull();
+      expect(cm('240 cm')).toBeNull();
+    });
+
+    it('returns null for empty / non-numeric', () => {
+      expect(cm('')).toBeNull();
+      expect(cm(null)).toBeNull();
+      expect(cm('n/a')).toBeNull();
     });
   });
 });
