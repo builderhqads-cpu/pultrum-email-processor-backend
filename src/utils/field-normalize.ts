@@ -85,9 +85,17 @@ export function parseDecimal(
     if (dots > 1) {
       s = s.split('.').join(''); // 1.234.567 -> thousands grouping
     } else {
-      // Single dot: "14.536" (3 digits, no leading zero) => thousands; else decimal.
-      const after = s.split('.')[1] ?? '';
-      if (after.length === 3 && !/^-?0\./.test(s)) s = s.split('.').join('');
+      // Single dot: treat as a thousands separator only when it forms a VALID
+      // group — 1–3 digits before, exactly 3 after, no leading zero ("14.536"
+      // => 14536). Four+ digits before the dot is not valid thousands grouping,
+      // so it's a decimal: "8453.025" stays 8453.025 (Niek: Derix weights were
+      // inflated ×1000 because the AI re-emits German weights as en-US
+      // dot-decimals, e.g. "6.591,600" -> "6591.600").
+      const [beforeRaw, after = ''] = s.split('.');
+      const before = beforeRaw.replace('-', '');
+      if (after.length === 3 && before.length <= 3 && !/^-?0\./.test(s)) {
+        s = s.split('.').join('');
+      }
     }
   }
 

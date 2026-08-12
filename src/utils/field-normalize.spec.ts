@@ -86,6 +86,13 @@ describe('field-normalize', () => {
       expect(parseDecimal('120')).toBe(120);
       expect(parseDecimal('14.536')).toBe(14536); // single dot, 3 digits => thousands
       expect(parseDecimal('0.750')).toBe(0.75); // leading zero => decimal
+      // Niek: en-US dot-decimal weights must NOT be read as thousands. 4+ digits
+      // before the dot is not a valid thousands group, so it's a decimal.
+      expect(parseDecimal('8453.025')).toBeCloseTo(8453.025, 3);
+      expect(parseDecimal('18450.000')).toBe(18450);
+      expect(parseDecimal('6591.600')).toBeCloseTo(6591.6, 1);
+      // German comma form was already correct — keep it that way.
+      expect(parseDecimal('6.591,600')).toBeCloseTo(6591.6, 1);
       expect(parseDecimal('')).toBeNull();
       expect(parseDecimal('n/a')).toBeNull();
     });
