@@ -75,6 +75,14 @@ export interface ClientProfile {
     partnerPatterns?: string[];
   };
 
+  /**
+   * This client lists the cargo WIDTH in millimeters, and the AI leaves it
+   * unconverted (it converts the length correctly, but not the width). When set,
+   * a bare millimeter-scale width is divided by 10 to whole centimeters — e.g.
+   * "240" -> "24" (Niek, Derix). Length/height are untouched.
+   */
+  widthInMm?: boolean;
+
   /** Free-text notes for operators / future reference. */
   notes?: string;
 }

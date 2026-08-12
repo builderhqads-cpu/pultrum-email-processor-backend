@@ -61,6 +61,11 @@ export const derixWesterkappelnProfile: ClientProfile = {
   // Deellading: meerdere LT-regels binnen een TR-blok = meerdere orders.
   split: { mode: 'deterministic', strategy: 'derix-tr-lt' },
 
+  // Sheet width column is in millimeters; the AI leaves it unconverted (it
+  // divides the length but not the width). Divide the bare width by 10 -> cm
+  // ("240" -> 24). Niek: "240 = 24 cm". Length is handled by the AI already.
+  widthInMm: true,
+
   // Withagen (route R103) should be excluded, but Niek still has to confirm /
   // add it to the mapping before we activate the rule. Left inert on purpose.
   exclude: {

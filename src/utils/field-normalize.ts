@@ -140,6 +140,23 @@ export function roundWholeCm(value: string | null | undefined): string {
 }
 
 /**
+ * Some clients (Derix) list the cargo WIDTH in millimeters, but the AI leaves it
+ * unconverted (it converts the length correctly, not the width). Divide a bare,
+ * millimeter-scale width (>= 100) by 10 to whole centimeters — e.g. "240" -> 24
+ * (Niek). A value already in cm range (< 100) is kept, and a value that carries
+ * an explicit unit token is left to the generic conversion. Returns null to keep
+ * the original value.
+ */
+export function widthMmToCm(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  const s = value.toString().trim();
+  if (!s || /[a-z]/i.test(s)) return null; // has a unit -> generic path
+  const n = parseDecimal(s);
+  if (n == null || n < 100) return null; // already cm-scale / not mm
+  return String(Math.round(n / 10));
+}
+
+/**
  * Derix reference format (Niek): a code + an LT-number must be joined with a
  * dash, e.g. "26TR001853 LT01" -> "26TR001853-LT01". Only the whitespace right
  * before a trailing LT-token is replaced; other references are untouched.

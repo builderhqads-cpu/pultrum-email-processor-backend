@@ -33,7 +33,7 @@ import { AiReplyService } from '../ai-reply/ai-reply.service';
 import { AddressEnrichmentService } from '../geocoding/address-enrichment.service';
 import type { SplitResult } from '../order-split/order-split.types';
 import { sanitizeExtractedValue } from '../../utils/sanitize';
-import { routeTimeBounds } from '../../utils/field-normalize';
+import { routeTimeBounds, widthMmToCm } from '../../utils/field-normalize';
 import {
   isExcludedParty,
   parseExcludedPartyNames,
@@ -674,6 +674,18 @@ export class EmailProcessingProcessor extends WorkerHost {
           ...(o.unmappedFields ?? {}),
           ...mergedKnownFields,
         };
+
+        // Niek (Derix): the sheet width is in mm and the AI leaves it
+        // unconverted ("240" should be 24 cm). Divide ONLY the width by 10 —
+        // the length is already converted by the AI, so it is left untouched.
+        if (clientProfile?.widthInMm) {
+          const widthCm = widthMmToCm(
+            (finalFields as Record<string, string>).width,
+          );
+          if (widthCm != null) {
+            (finalFields as Record<string, string>).width = widthCm;
+          }
+        }
 
         await this.transportBookingValidationService.validateOrderFromFieldValues(
           {

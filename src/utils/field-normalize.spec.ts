@@ -3,6 +3,7 @@ import {
   blankIfZeroPreservingDecimalString,
   dashLtReference,
   dropNameIfCity,
+  widthMmToCm,
   normalizeFieldMap,
   normalizeQuantity,
   normalizeTime,
@@ -295,6 +296,28 @@ describe('field-normalize', () => {
       normalizeFieldMap(map);
       expect(map.get('cargo_weight')).toBe('6592');
       expect(map.get('goods_weight')).toBe('6130');
+    });
+  });
+
+  describe('widthMmToCm (Derix mm width)', () => {
+    it('divides a millimeter-scale width by 10 (Niek: 240 -> 24)', () => {
+      expect(widthMmToCm('240')).toBe('24');
+      expect(widthMmToCm('200')).toBe('20');
+      expect(widthMmToCm('400')).toBe('40');
+      expect(widthMmToCm('275')).toBe('28'); // 27.5 -> 28
+      expect(widthMmToCm('240,00')).toBe('24'); // German ,00 decimals
+    });
+
+    it('keeps a value already in cm scale (< 100) and unit-tagged values', () => {
+      expect(widthMmToCm('24')).toBeNull(); // already cm -> keep
+      expect(widthMmToCm('240 cm')).toBeNull(); // explicit unit -> generic path
+      expect(widthMmToCm('2.40 m')).toBeNull();
+    });
+
+    it('returns null for empty / non-numeric', () => {
+      expect(widthMmToCm('')).toBeNull();
+      expect(widthMmToCm(null)).toBeNull();
+      expect(widthMmToCm('n/a')).toBeNull();
     });
   });
 });
