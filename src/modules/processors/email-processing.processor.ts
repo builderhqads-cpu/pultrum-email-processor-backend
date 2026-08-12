@@ -663,10 +663,17 @@ export class EmailProcessingProcessor extends WorkerHost {
         const orderZipcodeHints = await this.resolveZipcodeEnrichment({
           fieldValues: preMergedFields,
         });
-        const finalFields = this.mergeMissingFieldValues(
+        const mergedKnownFields = this.mergeMissingFieldValues(
           preMergedFields,
           orderZipcodeHints,
         );
+        // Niek #12: carry the AI's unmapped extras onto the order so they show
+        // in the "Additional information" section (as unknown-key OPTIONAL
+        // fields). Mapped/known fields win on any key collision.
+        const finalFields = {
+          ...(o.unmappedFields ?? {}),
+          ...mergedKnownFields,
+        };
 
         await this.transportBookingValidationService.validateOrderFromFieldValues(
           {

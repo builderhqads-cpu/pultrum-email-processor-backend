@@ -558,4 +558,38 @@ describe('AiExtractionService', () => {
     // A key that is already canonical must pass through untouched.
     expect(analysis.orders[0].fields.delivery_address2).toBe('Baustelle');
   });
+
+  it('parses unmappedFields, keeping original labels (Niek #12)', () => {
+    const service = new AiExtractionService(
+      { get: jest.fn() } as any,
+      {} as any,
+      { log: jest.fn() } as any,
+      { resolveZipcodeHints: jest.fn(async () => []) } as any,
+    );
+
+    const analysis = (service as any).parseEmailAnalysis({
+      isTransportOrder: true,
+      confidence: 0.9,
+      orders: [
+        {
+          externalReference: '26BE03-003734',
+          fields: { pickup_city: 'Rijssen' },
+          unmappedFields: {
+            Incoterm: 'DAP',
+            Ladehilfsmittel: '2 Holzbalken',
+            Empty: '',
+            Nully: null,
+          },
+        },
+      ],
+    });
+
+    // Mapped fields stay separate from the unmapped extras.
+    expect(analysis.orders[0].fields.pickup_city).toBe('Rijssen');
+    // Original labels kept verbatim; empty/null entries dropped.
+    expect(analysis.orders[0].unmappedFields).toEqual({
+      Incoterm: 'DAP',
+      Ladehilfsmittel: '2 Holzbalken',
+    });
+  });
 });

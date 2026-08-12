@@ -76,6 +76,13 @@ export type AiCustomerProfileContext = {
 export type AiOrderResult = {
   externalReference?: string | null;
   fields: Record<string, string>;
+  /**
+   * Info the AI extracted from the order but couldn't map to a Transpas field
+   * (Niek #12). Keys are the document's ORIGINAL labels (NL/DE/EN, on purpose,
+   * to trace the origin); values are copied verbatim. Rendered in the existing
+   * "Additional information" section, like any unknown-key field.
+   */
+  unmappedFields?: Record<string, string>;
 };
 
 /** The AI's analysis of a whole email (classification + the orders it found). */
@@ -917,6 +924,7 @@ export class AiExtractionService {
         externalReference:
           o.externalReference != null ? String(o.externalReference).trim() : null,
         fields: this.normalizeAiFields(o.fields),
+        unmappedFields: this.normalizeUnmappedFields(o.unmappedFields),
       }));
     return {
       isTransportOrder: Boolean(raw.isTransportOrder),
@@ -926,6 +934,24 @@ export class AiExtractionService {
       orders,
       rawResponse: raw,
     };
+  }
+
+  /**
+   * The AI's unmapped extras (Niek #12): keep the ORIGINAL label as the key
+   * (not alias-folded — the label is the point), just sanitize the value and
+   * drop empties. The router already dedupes vs mapped fields.
+   */
+  private normalizeUnmappedFields(fields: unknown): Record<string, string> {
+    if (!fields || typeof fields !== 'object') return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(fields as Record<string, unknown>)) {
+      const key = (k ?? '').toString().trim();
+      if (!key || v == null) continue;
+      const s = sanitizeExtractedValue(String(v)).trim();
+      if (!s) continue;
+      out[key] = s;
+    }
+    return out;
   }
 
   private normalizeAiFields(
