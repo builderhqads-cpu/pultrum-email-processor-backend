@@ -274,6 +274,7 @@ export class OrdersService {
         _count: {
           select: {
             missingFields: true,
+            validationWarnings: true,
           },
         },
       },
@@ -307,6 +308,12 @@ export class OrdersService {
         ...order,
         invoiceReference: fields?.[0]?.value ?? null,
         missingFieldsCount: _count.missingFields,
+        // Niek: "Volledigheid" — weighted completeness (70% required / 30%
+        // recommended), shown in the list in place of the confidence score.
+        completeness: this.transportBookingValidationService.computeCompleteness(
+          _count.missingFields,
+          _count.validationWarnings,
+        ),
         lastAudit: lastAudit
           ? {
               action: lastAudit.action,

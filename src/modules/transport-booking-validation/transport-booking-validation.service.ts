@@ -287,6 +287,32 @@ export class TransportBookingValidationService {
     return this.ruleRequirement(rule) === FieldRequirement.REQUIRED;
   }
 
+  /**
+   * Weighted completeness ("Volledigheid", Niek): when ALL required fields are
+   * present the order is 70% complete (and sufficient for the XML); the
+   * recommended fields fill the remaining 30% up to 100%. Optional fields don't
+   * count. Derived from the missing counts (required = missingFields,
+   * recommended = validationWarnings), so it matches the per-field flags.
+   */
+  computeCompleteness(requiredMissing: number, recommendedMissing: number): number {
+    const reqTotal = TRANSPORT_BOOKING_FIELD_RULES.filter(
+      (r) => this.ruleRequirement(r) === FieldRequirement.REQUIRED,
+    ).length;
+    const recTotal = TRANSPORT_BOOKING_FIELD_RULES.filter(
+      (r) => this.ruleRequirement(r) === FieldRequirement.RECOMMENDED,
+    ).length;
+    const reqDone = Math.max(0, reqTotal - requiredMissing);
+    const recDone = Math.max(0, recTotal - recommendedMissing);
+    const reqRatio = reqTotal ? reqDone / reqTotal : 1;
+    const recRatio = recTotal ? recDone / recTotal : 1;
+    // Gated: required fields fill the 0–70% band; only once ALL required are
+    // present does the score cross 70% ("sufficient for XML") and the
+    // recommended fields fill the last 30%.
+    return reqRatio < 1
+      ? Math.round(reqRatio * 70)
+      : Math.round(70 + recRatio * 30);
+  }
+
   private async enqueueXmlDelivery(orderId: string) {
     const jobId = `xml-delivery_${orderId}`;
 
