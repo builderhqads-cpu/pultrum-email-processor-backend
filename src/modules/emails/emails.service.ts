@@ -2,6 +2,10 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  isXmlDocumentAttachment,
+  xmlDocumentsEnabled,
+} from '../../utils/xml-documents';
 import { QUEUE_EMAIL_PROCESSING } from '../queues/queue-names';
 import { EmailOriginalService } from './email-original.service';
 
@@ -118,6 +122,10 @@ export class EmailsService {
     const order = email.orders?.[0] ?? email.linkedOrder;
     const batchImport = email.batchImports?.[0] ?? null;
 
+    // Niek: flag which attachments are embedded in the Creative Gears XML, so
+    // the order detail can mark them. Same rule the XML builder uses.
+    const docsEnabled = xmlDocumentsEnabled();
+
     return {
       id: email.id,
       providerMessageId: email.graphMessageId,
@@ -136,7 +144,10 @@ export class EmailsService {
       classificationLanguage: email.classificationLanguage,
       classifiedAt: email.classifiedAt,
       mailbox: email.mailbox,
-      attachments: email.attachments,
+      attachments: email.attachments.map((att) => ({
+        ...att,
+        includedInXml: docsEnabled && isXmlDocumentAttachment(att),
+      })),
       order: order
         ? {
             id: order.id,

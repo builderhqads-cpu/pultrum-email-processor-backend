@@ -7,6 +7,10 @@ import {
   XmlDeliveryStatus,
 } from '@prisma/client';
 import { OrderFieldSource } from '@prisma/client';
+import {
+  isXmlDocumentAttachment,
+  xmlDocumentsEnabled,
+} from '../../utils/xml-documents';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TransportBookingValidationService } from '../transport-booking-validation/transport-booking-validation.service';
 import {
@@ -132,34 +136,8 @@ export class XmlService {
     mimeType?: string | null;
     contentBase64?: string | null;
   }) {
-    if (!input.contentBase64?.trim()) return false;
-
-    const mime = (input.mimeType || '').trim().toLowerCase();
-    const fileName = (input.fileName || '').trim().toLowerCase();
-
-    return (
-      mime === 'application/pdf' ||
-      mime === 'application/msword' ||
-      mime === 'application/vnd.ms-excel' ||
-      mime ===
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-      mime ===
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-      // Real image attachments (e.g. an access-route / aanrijroute photo).
-      // Inline logo/signature images are already filtered out upstream.
-      mime === 'image/jpeg' ||
-      mime === 'image/png' ||
-      mime === 'image/webp' ||
-      fileName.endsWith('.pdf') ||
-      fileName.endsWith('.doc') ||
-      fileName.endsWith('.docx') ||
-      fileName.endsWith('.xls') ||
-      fileName.endsWith('.xlsx') ||
-      fileName.endsWith('.jpg') ||
-      fileName.endsWith('.jpeg') ||
-      fileName.endsWith('.png') ||
-      fileName.endsWith('.webp')
-    );
+    // Shared with the emails API (`includedInXml` flag) so they never drift.
+    return isXmlDocumentAttachment(input);
   }
 
   /**
@@ -171,11 +149,7 @@ export class XmlService {
    * the previous behaviour.
    */
   private shouldIncludeOriginalDocuments(): boolean {
-    return (
-      (process.env.CREATIVE_GEARS_INCLUDE_DOCUMENTS ?? 'true')
-        .trim()
-        .toLowerCase() !== 'false'
-    );
+    return xmlDocumentsEnabled();
   }
 
   /**

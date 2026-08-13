@@ -57,6 +57,13 @@ export class OrdersController {
     return this.ordersService.sendXml(id);
   }
 
+  // Niek: send the XML for a whole batch at once.
+  @Post('batch/:batchImportId/send-xml')
+  @UseGuards(JwtAuthGuard)
+  sendBatchXml(@Param('batchImportId') batchImportId: string) {
+    return this.ordersService.sendBatchXml(batchImportId);
+  }
+
   @Post(':id/send-ai-request')
   @UseGuards(JwtAuthGuard)
   sendAiRequest(@Param('id') id: string) {

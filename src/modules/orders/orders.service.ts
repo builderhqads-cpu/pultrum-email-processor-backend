@@ -831,6 +831,52 @@ export class OrdersService {
     return { enqueued: true };
   }
 
+  /**
+   * Niek: send the XML for a whole batch at once. Enqueues one delivery per
+   * eligible order in the batch (same guards as sendXml: no missing required
+   * fields + a retryable status). Returns how many were enqueued vs skipped.
+   */
+  async sendBatchXml(batchImportId: string) {
+    const retryableStatuses = new Set<OrderStatus>([
+      OrderStatus.READY_TO_XML,
+      OrderStatus.CREATIVE_GEARS_REJECTED,
+      OrderStatus.FAILED,
+    ]);
+
+    const orders = await this.prismaService.transportOrder.findMany({
+      where: { batchImportId },
+      select: {
+        id: true,
+        status: true,
+        _count: { select: { missingFields: true } },
+      },
+    });
+    if (orders.length === 0) {
+      throw new NotFoundException(`No orders found for batch: ${batchImportId}`);
+    }
+
+    const eligible = orders.filter(
+      (o) => o._count.missingFields === 0 && retryableStatuses.has(o.status),
+    );
+
+    const now = Date.now();
+    await Promise.all(
+      eligible.map((o, i) =>
+        this.xmlDeliveryQueue.add(
+          'xml-delivery',
+          { orderId: o.id },
+          { jobId: `manual_xml-delivery_${o.id}_${now}_${i}` },
+        ),
+      ),
+    );
+
+    return {
+      enqueued: eligible.length,
+      skipped: orders.length - eligible.length,
+      total: orders.length,
+    };
+  }
+
   async sendAiRequest(id: string) {
     // Backward-compatible alias for "generate reply draft".
     return this.generateReplyDraft(id);
