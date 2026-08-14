@@ -420,7 +420,13 @@ export class XmlService {
       'shipment_edireference',
     );
     if (!shipmentEdiReference) {
-      shipmentEdiReference = edireference;
+      // #4 (Niek): in a batch the booking <edireference> is shared, but each
+      // shipment is a separate leg — so its edireference must stay UNIQUE, or
+      // Transpas could collapse the legs into one. Standalone orders keep the
+      // shipment reference equal to the booking one (single shipment).
+      shipmentEdiReference = order.batchImportId
+        ? this.generateEdiReference()
+        : edireference;
       await this.upsertOrderField({
         orderId: order.id,
         key: 'shipment_edireference',
