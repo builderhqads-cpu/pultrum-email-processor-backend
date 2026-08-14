@@ -298,9 +298,18 @@ export class XmlService {
   }
 
   private assertRequiredNonEmpty(values: Record<string, string>) {
+    // customer_id follows the SAME override as the readiness/completeness gate
+    // (CREATIVE_GEARS_REQUIRE_CUSTOMER_ID, default off), so "Ready for XML" and
+    // "can generate XML" never disagree. Mirrors the validation service.
+    const requireCustomerId = ['1', 'true', 'yes', 'y', 'on'].includes(
+      (process.env.CREATIVE_GEARS_REQUIRE_CUSTOMER_ID ?? '').trim().toLowerCase(),
+    );
+
     const requiredKeys = TRANSPORT_BOOKING_FIELD_RULES.filter(
       (r) => getRuleRequirement(r) === FieldRequirement.REQUIRED,
-    ).map((r) => r.key);
+    )
+      .map((r) => r.key)
+      .filter((k) => k !== 'customer_id' || requireCustomerId);
 
     const missing = requiredKeys.filter(
       (k) => !sanitizeExtractedValue(values[k] ?? ''),
