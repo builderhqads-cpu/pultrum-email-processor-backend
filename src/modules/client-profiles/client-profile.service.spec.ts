@@ -125,4 +125,40 @@ describe('ClientProfileService', () => {
       (svc as any).normalizeAdditionalContactEmails(['invalidentry'], 'p@x.com'),
     ).toThrow();
   });
+
+  // --- #3 (Van Losser): resolve the client per order by opdrachtgever ---
+
+  const withProfiles = (profiles: any[]) => {
+    const svc = new ClientProfileService({ get: () => 'false' } as any);
+    (svc as any).databaseProfiles = profiles;
+    return svc;
+  };
+
+  it('resolves the client from the opdrachtgever, normalized (case, B.V., spaces, accents)', () => {
+    const svc = withProfiles([
+      { id: 'etb', name: 'ETB Dijkink B.V.', match: { emails: [], domains: [] }, fixedFields: { customer_id: '111' } },
+      { id: 'bowa', name: 'Bowa Installaties Emmen B.V.', match: { emails: [], domains: [] }, fixedFields: { customer_id: '222' } },
+    ]);
+    expect(svc.resolveByOpdrachtgever('ETB DIJKINK BV')?.id).toBe('etb');
+    expect(svc.resolveByOpdrachtgever('  etb   dijkink  b.v. ')?.id).toBe('etb');
+    expect(svc.resolveByOpdrachtgever('Bowa Installaties Emmen BV')?.id).toBe('bowa');
+  });
+
+  it('returns null when the opdrachtgever is missing or unknown (never guesses)', () => {
+    const svc = withProfiles([
+      { id: 'etb', name: 'ETB Dijkink B.V.', match: { emails: [], domains: [] }, fixedFields: {} },
+    ]);
+    expect(svc.resolveByOpdrachtgever(null)).toBeNull();
+    expect(svc.resolveByOpdrachtgever('   ')).toBeNull();
+    expect(svc.resolveByOpdrachtgever('Some Other Company')).toBeNull();
+  });
+
+  it('returns null when the opdrachtgever is ambiguous (matches >1 profile)', () => {
+    const svc = withProfiles([
+      { id: 'a', name: 'ACME B.V.', match: { emails: [], domains: [] }, fixedFields: {} },
+      { id: 'b', name: 'ACME BV', match: { emails: [], domains: [] }, fixedFields: {} },
+    ]);
+    // Both normalize to "ACME BV" -> ambiguous -> unresolved (never a wrong customer_id).
+    expect(svc.resolveByOpdrachtgever('ACME B.V.')).toBeNull();
+  });
 });

@@ -246,6 +246,59 @@ export class ClientProfileService implements OnModuleInit {
     return null;
   }
 
+  /**
+   * Normalize a company name for opdrachtgever matching: strip accents,
+   * uppercase, drop dots (so "B.V." == "BV"), turn any other punctuation into a
+   * single space, collapse whitespace. Deliberately conservative — we compare
+   * for EQUALITY after this, never fuzzily.
+   */
+  private normalizeCompanyName(value: string | null | undefined): string {
+    return (value ?? '')
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '') // strip accents
+      .toUpperCase()
+      .replace(/\./g, '') // B.V. -> BV
+      .replace(/[^A-Z0-9]+/g, ' ')
+      .trim()
+      .replace(/\s+/g, ' ');
+  }
+
+  /**
+   * #3 (Niek/Van Losser): resolve the client from the order's `opdrachtgever`
+   * (the ordering company as written in the PDF), so one e-mail carrying orders
+   * for several customers maps each order to the right profile / customer_id.
+   *
+   * Curated + normalized-EXACT match against each profile's name — never fuzzy,
+   * and an ambiguous name (matching >1 profile) resolves to null. Rationale: a
+   * wrong match attributes the order to the wrong customer_id / financial
+   * relation in Transpas, which is worse than leaving it unresolved (the caller
+   * then flags it for the operator). Returns null when there is no single
+   * confident match.
+   */
+  resolveByOpdrachtgever(
+    opdrachtgever: string | null | undefined,
+  ): ClientProfile | null {
+    const target = this.normalizeCompanyName(opdrachtgever);
+    if (!target) return null;
+
+    const hits = this.all().filter(
+      (profile) => this.normalizeCompanyName(profile.name) === target,
+    );
+
+    if (hits.length === 1) {
+      this.logger.log(
+        `Resolved client profile '${hits[0].id}' from opdrachtgever '${opdrachtgever}'`,
+      );
+      return hits[0];
+    }
+    if (hits.length > 1) {
+      this.logger.warn(
+        `Opdrachtgever '${opdrachtgever}' matched ${hits.length} profiles; leaving unresolved (needs a unique name).`,
+      );
+    }
+    return null;
+  }
+
   private matchesContent(profile: ClientProfile, content: string): boolean {
     const markers = profile.match.contentMarkers ?? [];
     if (markers.length === 0) return false;

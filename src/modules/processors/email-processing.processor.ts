@@ -606,6 +606,25 @@ export class EmailProcessingProcessor extends WorkerHost {
     for (const o of analysis.orders) {
       seq++;
       try {
+        // #3 (Niek/Van Losser): resolve THIS order's client from its
+        // opdrachtgever (the ordering company in the PDF), so one e-mail
+        // carrying orders for several customers maps each order to the right
+        // profile / customer_id. Falls back to the sender-matched profile; an
+        // unresolved opdrachtgever stays flagged (never a wrong customer_id).
+        const opdrachtgever = (
+          (o.fields as Record<string, string> | undefined)?.opdrachtgever ?? ''
+        ).trim();
+        const orderProfile =
+          this.clientProfileService.resolveByOpdrachtgever(opdrachtgever) ??
+          clientProfile;
+        const orderProfileFields =
+          orderProfile === clientProfile
+            ? profileFields
+            : orderProfile
+              ? this.clientProfileService.derive(orderProfile, combinedText)
+              : {};
+        const orderCustomerName = opdrachtgever || email.fromName || null;
+
         const extRef = o.externalReference || null;
         // Idempotency: by external reference, or (single) the primary order.
         const existing = extRef
@@ -632,6 +651,8 @@ export class EmailProcessingProcessor extends WorkerHost {
             data: {
               batchImportId: batch?.id ?? null,
               batchSequence: isBatch ? seq : null,
+              // Refresh the client on reprocess (opdrachtgever may now resolve).
+              customerName: orderCustomerName,
             },
           });
         } else {
@@ -645,7 +666,7 @@ export class EmailProcessingProcessor extends WorkerHost {
               type: OrderType.NEW_ORDER,
               status: OrderStatus.PROCESSING,
               customerEmail: email.fromEmail,
-              customerName: email.fromName || null,
+              customerName: orderCustomerName,
             },
           });
           orderId = order.id;
@@ -654,7 +675,7 @@ export class EmailProcessingProcessor extends WorkerHost {
         // Registered customer defaults override the AI's reading of the email.
         const profileMergedFields = this.applyProfileOverrides(
           o.fields,
-          profileFields,
+          orderProfileFields,
         );
         const preMergedFields =
           analysis.orders.length === 1
@@ -678,7 +699,7 @@ export class EmailProcessingProcessor extends WorkerHost {
         // Niek (Derix): the sheet width is in mm and the AI leaves it
         // unconverted ("240" should be 24 cm). Divide ONLY the width by 10 —
         // the length is already converted by the AI, so it is left untouched.
-        if (clientProfile?.widthInMm) {
+        if (orderProfile?.widthInMm) {
           const widthCm = widthMmToCm(
             (finalFields as Record<string, string>).width,
           );
@@ -694,7 +715,7 @@ export class EmailProcessingProcessor extends WorkerHost {
             emailSubject: email.subject ?? '',
             fieldValues: finalFields,
             source: 'ai',
-            fieldMetaByKey: this.buildProfileFieldMeta(profileFields, finalFields),
+            fieldMetaByKey: this.buildProfileFieldMeta(orderProfileFields, finalFields),
           },
           { enqueueJobs },
         );
