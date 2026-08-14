@@ -712,10 +712,17 @@ export class OrdersService {
     existingFields: Record<string, string>,
     text: string,
   ): Promise<void> {
-    const profile = this.clientProfileService.resolve({
-      fromEmail: order.customerEmail,
-      text,
-    });
+    // #3 (Niek/Van Losser): resolve the client from the order's opdrachtgever
+    // first (same as initial processing), so reprocessing an order AFTER its
+    // client's profile is created picks up the right customer_id. Falls back to
+    // the sender-matched profile when there's no confident opdrachtgever match.
+    const opdrachtgever = (existingFields['opdrachtgever'] ?? '').trim();
+    const profile =
+      this.clientProfileService.resolveByOpdrachtgever(opdrachtgever) ??
+      this.clientProfileService.resolve({
+        fromEmail: order.customerEmail,
+        text,
+      });
     const presetFields = profile
       ? this.clientProfileService.derive(profile, text)
       : {};

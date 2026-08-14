@@ -16,6 +16,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "ts-node --transpile-only -P tsconfig.seed.json prisma/seed.ts",
+    "ingest:eml": "ts-node --transpile-only -P tsconfig.seed.json scripts/ingest-eml.ts",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
