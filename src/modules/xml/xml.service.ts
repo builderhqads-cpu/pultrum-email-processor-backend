@@ -43,6 +43,20 @@ export class XmlService {
     return `EDI-${ts}${rnd}`;
   }
 
+  /**
+   * #4 (Niek): a weekly-list batch must go out with ONE shared <edireference>
+   * so Transpas can merge its orders into a single booking with multiple legs.
+   * Derived deterministically from the batch id, so every order in the batch
+   * computes the same value (no cross-order coordination / race).
+   */
+  private batchEdiReference(batchImportId: string): string {
+    let hash = 0;
+    for (let i = 0; i < batchImportId.length; i += 1) {
+      hash = (hash * 31 + batchImportId.charCodeAt(i)) | 0;
+    }
+    return `EDI-B${Math.abs(hash).toString(36).toUpperCase()}`;
+  }
+
   private parseNumber(value: string | null | undefined) {
     return parseDecimal(value);
   }
@@ -365,8 +379,24 @@ export class XmlService {
     );
 
     // Generated fields (persist if missing).
+    // #4 (Niek): orders in a weekly-list batch share one deterministic
+    // <edireference> (so Transpas merges them into a single booking with
+    // multiple legs); standalone orders keep a unique generated reference.
     let edireference = this.getFieldValue(fieldMap, 'edireference');
-    if (!edireference) {
+    const batchEdireference = order.batchImportId
+      ? this.batchEdiReference(order.batchImportId)
+      : null;
+    if (batchEdireference) {
+      if (edireference !== batchEdireference) {
+        edireference = batchEdireference;
+        await this.upsertOrderField({
+          orderId: order.id,
+          key: 'edireference',
+          value: edireference,
+        });
+        fieldMap.set('edireference', edireference);
+      }
+    } else if (!edireference) {
       edireference = this.generateEdiReference();
       await this.upsertOrderField({
         orderId: order.id,
