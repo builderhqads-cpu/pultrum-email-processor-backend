@@ -9,6 +9,8 @@ import {
 import { OrderFieldSource } from '@prisma/client';
 import {
   isXmlDocumentAttachment,
+  xmlAttachmentConcerns,
+  xmlAttachmentDocumentType,
   xmlDocumentsEnabled,
 } from '../../utils/xml-documents';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -191,6 +193,10 @@ export class XmlService {
             fileName: string;
             mimeType: string;
             contentBase64?: string | null;
+            // Niek #6: 'loading' | 'unloading' | 'both', set by the AI once it
+            // classifies the document against the order's pickup/delivery
+            // address. Absent today -> the attachment goes out as 92.
+            documentPurpose?: string | null;
           }>;
         }
       | null
@@ -225,14 +231,15 @@ export class XmlService {
       if (!this.isSupportedOriginalAttachment(attachment)) continue;
 
       documentEntries.push({
-        // 92 = EMAIL Attachment (PDF/DOCX/XLSX), per Rick/ArtSystems.
-        documentType: '92',
+        // 92 = Factuurbijlage (default). Niek #6: when the AI classifies the
+        // document (loading/unloading/both), it maps to 86/87/91 instead.
+        documentType: xmlAttachmentDocumentType(attachment.documentPurpose),
         fileName: this.normalizeDocumentFileName(
           attachment.fileName,
           `attachment-${documentEntries.length + 1}`,
         ),
         fileData: (attachment.contentBase64 || '').trim(),
-        concerns: 'Bijlage',
+        concerns: xmlAttachmentConcerns(attachment.documentPurpose),
       });
     }
 
