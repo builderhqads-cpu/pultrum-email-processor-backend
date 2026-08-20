@@ -371,7 +371,6 @@ export function routeTimeBounds(
 ): Record<string, unknown> {
   const out = { ...fields };
   const haystack = (text ?? '').toString();
-  if (!haystack.trim()) return out;
 
   const apply = (kwRe: string, kind: 'till' | 'from') => {
     const re = new RegExp(`${kwRe}\\s+${TIME_RE}`, 'gi');
@@ -399,7 +398,24 @@ export function routeTimeBounds(
     }
   };
 
-  apply(UNTIL_RE, 'till');
-  apply(FROM_RE, 'from');
+  if (haystack.trim()) {
+    apply(UNTIL_RE, 'till');
+    apply(FROM_RE, 'from');
+  }
+
+  // Niek: when only a start time is given ("time from") and no "time till",
+  // the deadline equals the start — you must be there punctually at that time.
+  // Applies to pickup and delivery. Asymmetric: a lone "time till" leaves the
+  // "time from" empty (never copied back).
+  for (const side of ['pickup', 'delivery'] as const) {
+    const fromKey = `${side}_time`;
+    const tillKey = `${side}_time_till`;
+    const from = normalizeTime(String(out[fromKey] ?? ''));
+    const hasTill = String(out[tillKey] ?? '').trim().length > 0;
+    if (/^\d{2}:\d{2}$/.test(from) && !hasTill) {
+      out[tillKey] = from;
+    }
+  }
+
   return out;
 }

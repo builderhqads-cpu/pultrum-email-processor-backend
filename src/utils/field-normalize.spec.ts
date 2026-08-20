@@ -53,19 +53,48 @@ describe('field-normalize', () => {
       expect(out.delivery_time).toBe('08:00');
     });
 
-    it('leaves a plain "at X" time untouched (no bound keyword)', () => {
+    it('fills the "till" from a lone start time (Niek: be there punctually)', () => {
       const out = routeTimeBounds(
         { delivery_time: '07:00' },
         'Om 7.00 uur lossen in Best.',
       );
+      // No bound keyword, so the start stays; with no "till" given, the
+      // deadline equals the start.
       expect(out.delivery_time).toBe('07:00');
-      expect(out.delivery_time_till).toBeUndefined();
+      expect(out.delivery_time_till).toBe('07:00');
     });
 
     it('ignores ambiguous matches (no pickup/delivery context)', () => {
       const out = routeTimeBounds({}, 'beschikbaar tot 18:00');
       expect(out.delivery_time_till).toBeUndefined();
       expect(out.pickup_time_till).toBeUndefined();
+    });
+
+    // Niek: a lone "time from" fills the "till" (same time); works with no text.
+    it('fills *_time_till from *_time for pickup and delivery when no till', () => {
+      const out = routeTimeBounds(
+        { pickup_time: '08:00', delivery_time: '07:00' },
+        '',
+      );
+      expect(out.pickup_time_till).toBe('08:00');
+      expect(out.delivery_time_till).toBe('07:00');
+    });
+
+    it('is asymmetric: a lone *_time_till never fills *_time', () => {
+      const out = routeTimeBounds(
+        { delivery_time_till: '17:00', pickup_time_till: '09:00' },
+        '',
+      );
+      expect(out.delivery_time).toBeUndefined();
+      expect(out.pickup_time).toBeUndefined();
+    });
+
+    it('does not overwrite an existing *_time_till', () => {
+      const out = routeTimeBounds(
+        { delivery_time: '07:00', delivery_time_till: '09:00' },
+        '',
+      );
+      expect(out.delivery_time_till).toBe('09:00');
     });
   });
 
