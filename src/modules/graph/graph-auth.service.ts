@@ -236,10 +236,24 @@ export class GraphAuthService {
       );
     }
 
+    // The signed-in account does NOT have to BE the mailbox: a SHARED mailbox
+    // (e.g. planning@) is connected by signing in as a user who has Full Access
+    // to it. So instead of requiring account == mailbox, when they differ we
+    // verify the signed-in account can actually READ the target mailbox.
     if (profile.email.toLowerCase() !== mailbox.email.toLowerCase()) {
-      throw new Error(
-        `Connected Microsoft account ${profile.email} does not match mailbox ${mailbox.email}.`,
-      );
+      try {
+        await this.createAuthenticatedClient(tokens.accessToken)
+          .api(
+            `/users/${encodeURIComponent(mailbox.email)}/mailFolders/inbox`,
+          )
+          .get();
+      } catch {
+        throw new Error(
+          `The signed-in account ${profile.email} does not have access to mailbox ` +
+            `${mailbox.email}. Sign in with an account that has Full Access to this ` +
+            `(shared) mailbox, or sign in as the mailbox itself.`,
+        );
+      }
     }
 
     const expiresAt = new Date(
