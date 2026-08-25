@@ -94,16 +94,26 @@ export class EmailSenderService {
     mailboxEmail: string,
     input: SendEmailInput,
   ): Promise<SendEmailResult> {
-    const storedScopes =
-      await this.graphAuthService.getMailboxStoredScopes(mailboxEmail);
-    if (!storedScopes || !storedScopes.split(/\s+/).includes('Mail.Send')) {
-      throw new Error(
-        `Mailbox ${mailboxEmail} must be reconnected in Microsoft Graph to grant Mail.Send.`,
-      );
+    const appOnly = this.graphAuthService.appOnlyEnabled;
+    // Delegated mode stores the scopes each mailbox was connected with; app-only
+    // uses the app's Application permission (Mail.Send) instead, so skip it.
+    if (!appOnly) {
+      const storedScopes =
+        await this.graphAuthService.getMailboxStoredScopes(mailboxEmail);
+      if (!storedScopes || !storedScopes.split(/\s+/).includes('Mail.Send')) {
+        throw new Error(
+          `Mailbox ${mailboxEmail} must be reconnected in Microsoft Graph to grant Mail.Send.`,
+        );
+      }
     }
 
     const client =
       await this.graphAuthService.getAuthenticatedClient(mailboxEmail);
+
+    // App-only has no "/me" (no signed-in user) — address the mailbox by id.
+    const base = appOnly
+      ? `/users/${encodeURIComponent(mailboxEmail)}`
+      : '/me';
 
     const replyTo = input.replyTo
       ? [{ emailAddress: { address: input.replyTo } }]
@@ -116,17 +126,17 @@ export class EmailSenderService {
     if (replyId) {
       try {
         const draft = (await client
-          .api(`/me/messages/${encodeURIComponent(replyId)}/createReply`)
+          .api(`${base}/messages/${encodeURIComponent(replyId)}/createReply`)
           .post({})) as { id?: string };
         if (draft?.id) {
-          await client.api(`/me/messages/${encodeURIComponent(draft.id)}`).patch({
+          await client.api(`${base}/messages/${encodeURIComponent(draft.id)}`).patch({
             subject: input.subject,
             body: { contentType: 'Text', content: this.composeBody(input) },
             toRecipients: [{ emailAddress: { address: input.toEmail } }],
             ...(replyTo ? { replyTo } : {}),
           });
           await client
-            .api(`/me/messages/${encodeURIComponent(draft.id)}/send`)
+            .api(`${base}/messages/${encodeURIComponent(draft.id)}/send`)
             .post({});
           return {
             ok: true,
@@ -143,7 +153,7 @@ export class EmailSenderService {
     }
 
     // Fallback: standalone message (no RFC threading headers — Graph rejects them).
-    await client.api('/me/sendMail').post({
+    await client.api(`${base}/sendMail`).post({
       message: {
         subject: input.subject,
         body: { contentType: 'Text', content: this.composeBody(input) },

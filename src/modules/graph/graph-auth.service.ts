@@ -183,7 +183,62 @@ export class GraphAuthService {
     };
   }
 
+  /**
+   * App-only (client-credentials) mode: the backend authenticates as the APP
+   * itself — no interactive sign-in, no per-mailbox OAuth token, no shared-
+   * mailbox Full Access needed. Reads a mailbox via /users/{mailbox} with an
+   * Application-permission token. Enabled with GRAPH_APP_ONLY=true; requires a
+   * real MS_TENANT_ID (not common/consumers), the client secret, and the app
+   * granted Application permissions (Mail.Read/Mail.Send) + admin consent.
+   */
+  get appOnlyEnabled(): boolean {
+    return ['1', 'true', 'yes', 'y', 'on'].includes(
+      (this.configService.get<string>('GRAPH_APP_ONLY') ?? '')
+        .trim()
+        .toLowerCase(),
+    );
+  }
+
+  private appOnlyToken: { token: string; expiresAt: number } | null = null;
+
+  private async getAppOnlyToken(): Promise<string> {
+    if (this.appOnlyToken && Date.now() < this.appOnlyToken.expiresAt) {
+      return this.appOnlyToken.token;
+    }
+
+    const body = new URLSearchParams();
+    body.set('client_id', this.clientId);
+    body.set('client_secret', this.clientSecret);
+    body.set('grant_type', 'client_credentials');
+    body.set('scope', 'https://graph.microsoft.com/.default');
+
+    const res = await fetch(this.tokenEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`App-only token request failed: ${res.status} ${text}`);
+    }
+    const json = (await res.json()) as {
+      access_token: string;
+      expires_in?: number;
+    };
+    this.appOnlyToken = {
+      token: json.access_token,
+      expiresAt: Date.now() + Math.max(0, (json.expires_in ?? 3600) - 60) * 1000,
+    };
+    return this.appOnlyToken.token;
+  }
+
   async getAuthenticatedClient(mailboxEmail: string) {
+    // App-only: authenticate as the app (client credentials), no per-mailbox
+    // token or interactive sign-in required.
+    if (this.appOnlyEnabled) {
+      return this.createAuthenticatedClient(await this.getAppOnlyToken());
+    }
+
     const record = await this.getMailboxTokenRecord(mailboxEmail);
     if (!record?.graphAccessToken) {
       throw new Error(
@@ -322,7 +377,8 @@ export class GraphAuthService {
       mailboxId: mailbox.id,
       mailboxEmail: mailbox.email,
       department: mailbox.department,
-      connected: Boolean(mailbox.graphConnectedEmail),
+      // App-only mode is "connected" by configuration (no per-mailbox token).
+      connected: this.appOnlyEnabled || Boolean(mailbox.graphConnectedEmail),
       email: mailbox.graphConnectedEmail ?? null,
       displayName: mailbox.graphDisplayName ?? null,
       expiresAt: mailbox.graphTokenExpiresAt?.toISOString() ?? null,
@@ -354,7 +410,8 @@ export class GraphAuthService {
       department: mailbox.department,
       active: mailbox.active,
       lastSyncedAt: mailbox.lastSyncedAt?.toISOString() ?? null,
-      graphConnected: Boolean(mailbox.graphConnectedEmail),
+      graphConnected:
+        this.appOnlyEnabled || Boolean(mailbox.graphConnectedEmail),
       graphConnectedEmail: mailbox.graphConnectedEmail ?? null,
       graphDisplayName: mailbox.graphDisplayName ?? null,
       graphTenantId: mailbox.graphTenantId ?? null,
