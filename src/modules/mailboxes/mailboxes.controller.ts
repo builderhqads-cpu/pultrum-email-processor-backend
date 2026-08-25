@@ -45,6 +45,16 @@ export class MailboxesController {
     private readonly mailSyncService: MailSyncService,
   ) {}
 
+  /** App-only (server-to-server) mode: the mailbox is connected by config, so
+   *  it has no per-mailbox OAuth token / graphConnectedEmail. */
+  private get appOnlyEnabled(): boolean {
+    return ['1', 'true', 'yes', 'y', 'on'].includes(
+      (this.configService.get<string>('GRAPH_APP_ONLY') ?? '')
+        .trim()
+        .toLowerCase(),
+    );
+  }
+
   private mapMailbox(mailbox: {
     id: string;
     email: string;
@@ -63,7 +73,8 @@ export class MailboxesController {
       department: mailbox.department,
       active: mailbox.active,
       lastSyncedAt: mailbox.lastSyncedAt,
-      graphConnected: Boolean(mailbox.graphConnectedEmail),
+      graphConnected:
+        this.appOnlyEnabled || Boolean(mailbox.graphConnectedEmail),
       graphConnectedEmail: mailbox.graphConnectedEmail,
       graphDisplayName: mailbox.graphDisplayName,
       graphTenantId: mailbox.graphTenantId,
@@ -292,7 +303,7 @@ export class MailboxesController {
           `When MAIL_PROVIDER=imap, mailbox.email must match IMAP_USER (${configuredEmail}).`,
         );
       }
-    } else if (!mailbox.graphConnectedEmail) {
+    } else if (!this.appOnlyEnabled && !mailbox.graphConnectedEmail) {
       throw new BadRequestException(
         `Mailbox ${mailbox.email} is not connected to Microsoft Graph.`,
       );
