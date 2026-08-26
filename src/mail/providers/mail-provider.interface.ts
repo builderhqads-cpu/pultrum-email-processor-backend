@@ -28,5 +28,6 @@ export interface NormalizedEmail {
 }
 
 export interface MailProvider {
-  syncInbox(limit?: number): Promise<NormalizedEmail[]>;
+  // `since` is a high-water mark: only return messages received at/after it.
+  syncInbox(limit?: number, since?: Date): Promise<NormalizedEmail[]>;
 }

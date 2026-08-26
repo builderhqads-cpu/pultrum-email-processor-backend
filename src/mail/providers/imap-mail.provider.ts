@@ -149,7 +149,9 @@ export class ImapMailProvider implements MailProvider {
     return res.accessToken.replace(/\s+/g, '');
   }
 
-  async syncInbox(limit = 10): Promise<NormalizedEmail[]> {
+  // `_since` is enforced centrally in MailSyncService (post-fetch guard); the
+  // IMAP path keeps its simple fetch and lets that guard drop older messages.
+  async syncInbox(limit = 10, _since?: Date): Promise<NormalizedEmail[]> {
     if (limit <= 0) return [];
 
     const config = this.getConfig();

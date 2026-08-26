@@ -25,11 +25,11 @@ export class GraphMailProvider implements MailProvider {
     private readonly mailboxEmail: string,
   ) {}
 
-  async syncInbox(limit = 10): Promise<NormalizedEmail[]> {
+  async syncInbox(limit = 10, since?: Date): Promise<NormalizedEmail[]> {
     const client = await this.graphAuthService.getAuthenticatedClient(
       this.mailboxEmail,
     );
-    const response = await client
+    const request = client
       .api(
         `/users/${encodeURIComponent(this.mailboxEmail)}/mailFolders/inbox/messages`,
       )
@@ -37,8 +37,16 @@ export class GraphMailProvider implements MailProvider {
       .orderby('receivedDateTime desc')
       .select(
         'id,conversationId,internetMessageId,from,subject,bodyPreview,body,receivedDateTime,hasAttachments',
-      )
-      .get();
+      );
+
+    // High-water mark: never even download the historical backlog. Filtering on
+    // the same property we order by (receivedDateTime) is a supported combo and
+    // needs no ConsistencyLevel header.
+    if (since) {
+      request.filter(`receivedDateTime ge ${since.toISOString()}`);
+    }
+
+    const response = await request.get();
 
     const messages = (response?.value ?? []) as GraphMessage[];
 

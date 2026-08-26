@@ -155,6 +155,9 @@ export class MailboxesController {
         email,
         department,
         active,
+        // High-water mark: connecting a mailbox starts processing from now, so
+        // its historical backlog is never pulled into the AI pipeline.
+        processMessagesFrom: new Date(),
       },
       select: mailboxSelect,
     });

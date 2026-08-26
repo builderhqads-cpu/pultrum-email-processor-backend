@@ -20,7 +20,18 @@ export class MailSyncService {
   async syncMailbox(mailbox: Mailbox) {
     const configuredProvider = this.mailProviderFactory.getConfiguredProvider();
     const provider = this.mailProviderFactory.createForMailbox(mailbox.email);
-    const messages = await provider.syncInbox(20);
+
+    // High-water mark: only process emails received at/after this instant, so we
+    // never pull a mailbox's historical backlog into the (expensive) AI
+    // pipeline. Falls back to createdAt if the cutoff was never set.
+    const since = mailbox.processMessagesFrom ?? mailbox.createdAt ?? undefined;
+
+    const fetched = await provider.syncInbox(20, since);
+    // Authoritative guard (belt-and-suspenders): enforce the cutoff even if the
+    // provider ignores the `since` hint.
+    const messages = since
+      ? fetched.filter((m) => m.receivedAt.getTime() >= since.getTime())
+      : fetched;
 
     if (!messages.length) {
       return {

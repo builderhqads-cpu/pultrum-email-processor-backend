@@ -80,6 +80,10 @@ model Mailbox {
   department             Department
   active                 Boolean    @default(true)
   lastSyncedAt           DateTime?
+  // High-water mark: the sync only processes emails received at/after this
+  // instant, so connecting a mailbox never pulls its historical backlog into
+  // the (expensive) AI pipeline. Set to "now" when the mailbox is created.
+  processMessagesFrom    DateTime?
   graphConnectedEmail    String?
   graphDisplayName       String?
   graphProviderAccountId String?
