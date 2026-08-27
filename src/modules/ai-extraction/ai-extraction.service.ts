@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { TransportBookingFieldRule } from '../required-fields/transport-booking-field-rules';
 import { sanitizeExtractedValue } from '../../utils/sanitize';
+import { normalizeDocumentPurpose } from '../../utils/xml-documents';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import {
@@ -85,6 +86,17 @@ export type AiOrderResult = {
   unmappedFields?: Record<string, string>;
 };
 
+/**
+ * Niek #6: the AI's per-attachment classification from /eml-process. It matches
+ * each attachment to the order's pickup/delivery so the XML can emit Transpas
+ * documenttype 86/87/91 (null -> default 92).
+ */
+export type AiAttachmentClassification = {
+  filename: string;
+  documentPurpose: 'loading' | 'unloading' | 'both' | null;
+  purposeReason?: string | null;
+};
+
 /** The AI's analysis of a whole email (classification + the orders it found). */
 export type AiEmailAnalysis = {
   isTransportOrder: boolean;
@@ -92,6 +104,8 @@ export type AiEmailAnalysis = {
   reason: string;
   language: string | null;
   orders: AiOrderResult[];
+  /** Niek #6: per-attachment document purpose (loading/unloading/both/null). */
+  attachments?: AiAttachmentClassification[];
   /** The full raw response from the route (for the AI requests panel). */
   rawResponse?: any;
   /** The exact body we POSTed (eml truncated), for the AI requests panel. */
@@ -932,8 +946,36 @@ export class AiExtractionService {
       reason: typeof raw.reason === 'string' ? raw.reason : '',
       language: typeof raw.language === 'string' ? raw.language : null,
       orders,
+      attachments: this.normalizeAttachmentClassifications(raw.attachments),
       rawResponse: raw,
     };
+  }
+
+  /**
+   * Niek #6: normalize the response's `attachments[]` classification. Each entry
+   * carries the attachment filename and its document purpose; unknown/missing
+   * purposes collapse to null (the attachment then goes out as 92).
+   */
+  private normalizeAttachmentClassifications(
+    input: unknown,
+  ): AiAttachmentClassification[] {
+    if (!Array.isArray(input)) return [];
+    return input
+      .map((item) => {
+        if (!item || typeof item !== 'object') return null;
+        const filename = sanitizeExtractedValue((item as any).filename ?? '');
+        if (!filename) return null;
+        const reasonRaw = (item as any).purposeReason;
+        return {
+          filename,
+          documentPurpose: normalizeDocumentPurpose(
+            (item as any).documentPurpose,
+          ),
+          purposeReason:
+            typeof reasonRaw === 'string' ? reasonRaw.trim() || null : null,
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => Boolean(x));
   }
 
   /**

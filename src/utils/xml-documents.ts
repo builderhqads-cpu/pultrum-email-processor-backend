@@ -74,6 +74,31 @@ export function xmlAttachmentDocumentType(purpose?: string | null): string {
   }
 }
 
+/**
+ * Niek #6: normalize the AI's raw attachment classification to the canonical
+ * purpose we persist and emit — 'loading' | 'unloading' | 'both', or null when
+ * the attachment is not a loading/unloading document (it then goes out as 92).
+ * Tolerates the Dutch synonyms the XML mapping also accepts.
+ */
+export function normalizeDocumentPurpose(
+  value?: string | null,
+): 'loading' | 'unloading' | 'both' | null {
+  switch ((value ?? '').trim().toLowerCase()) {
+    case 'loading':
+    case 'laden':
+      return 'loading';
+    case 'unloading':
+    case 'lossen':
+      return 'unloading';
+    case 'both':
+    case 'beide':
+    case 'laden/lossen':
+      return 'both';
+    default:
+      return null;
+  }
+}
+
 /** Human "concerns" label for a document, matching its purpose. */
 export function xmlAttachmentConcerns(purpose?: string | null): string {
   switch (xmlAttachmentDocumentType(purpose)) {

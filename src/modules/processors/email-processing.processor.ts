@@ -458,6 +458,10 @@ export class EmailProcessingProcessor extends WorkerHost {
     if (!analysis) {
       throw new Error(`AI analysis returned null for emailMessageId=${email.id}`);
     }
+
+    // Niek #6: persist the AI's per-attachment classification (loading/unloading/
+    // both) so the XML emits documenttype 86/87/91 instead of the default 92.
+    await this.applyAttachmentPurposes(email.id, analysis.attachments);
     // Preview of what we POST to /eml-process (the full base64 would bloat the
     // DB; the field name + size + a head sample are enough for debugging).
     const emlPreview = eml
@@ -1277,6 +1281,55 @@ export class EmailProcessingProcessor extends WorkerHost {
             }
           : {},
       });
+    }
+  }
+
+  /**
+   * Niek #6: persist the AI's per-attachment document purpose. The /eml-process
+   * response classifies each attachment (loading/unloading/both) by matching it
+   * to the order's pickup/delivery; we store it on the Attachment row so the XML
+   * builder maps it to Transpas documenttype 86/87/91 (null stays 92). Matched by
+   * filename within THIS email; idempotent on reprocess (sets the exact value the
+   * AI returned, including null). Best-effort — never blocks processing.
+   */
+  private async applyAttachmentPurposes(
+    emailMessageId: string,
+    classifications?: Array<{
+      filename: string;
+      documentPurpose: 'loading' | 'unloading' | 'both' | null;
+    }> | null,
+  ) {
+    const list = (classifications ?? []).filter((c) => c && c.filename);
+    if (!list.length) return;
+
+    // filename (lower-cased) -> purpose or null. Last entry wins on duplicates.
+    const byName = new Map<string, string | null>();
+    for (const c of list) {
+      byName.set(c.filename.trim().toLowerCase(), c.documentPurpose ?? null);
+    }
+
+    const attachments = await this.prismaService.attachment.findMany({
+      where: { emailMessageId },
+      select: { id: true, fileName: true, documentPurpose: true },
+    });
+
+    let updated = 0;
+    for (const att of attachments) {
+      const key = (att.fileName || '').trim().toLowerCase();
+      if (!byName.has(key)) continue;
+      const purpose = byName.get(key) ?? null;
+      if ((att.documentPurpose ?? null) === purpose) continue; // no-op
+      await this.prismaService.attachment.update({
+        where: { id: att.id },
+        data: { documentPurpose: purpose },
+      });
+      updated++;
+    }
+
+    if (updated > 0) {
+      this.logger.log(
+        `Applied AI document purpose to ${updated} attachment(s) emailMessageId=${emailMessageId}`,
+      );
     }
   }
 

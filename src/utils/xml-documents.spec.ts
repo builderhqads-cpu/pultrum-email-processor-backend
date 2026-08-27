@@ -1,4 +1,5 @@
 import {
+  normalizeDocumentPurpose,
   xmlAttachmentConcerns,
   xmlAttachmentDocumentType,
 } from './xml-documents';
@@ -31,5 +32,41 @@ describe('xmlAttachmentDocumentType (Niek #6)', () => {
     expect(xmlAttachmentConcerns('unloading')).toBe('Document lossen');
     expect(xmlAttachmentConcerns('both')).toBe('Document laden/lossen');
     expect(xmlAttachmentConcerns(null)).toBe('Bijlage');
+  });
+});
+
+describe('normalizeDocumentPurpose (Niek #6)', () => {
+  it('canonicalizes EN + NL synonyms', () => {
+    expect(normalizeDocumentPurpose('loading')).toBe('loading');
+    expect(normalizeDocumentPurpose('laden')).toBe('loading');
+    expect(normalizeDocumentPurpose('unloading')).toBe('unloading');
+    expect(normalizeDocumentPurpose('lossen')).toBe('unloading');
+    expect(normalizeDocumentPurpose('both')).toBe('both');
+    expect(normalizeDocumentPurpose('beide')).toBe('both');
+    expect(normalizeDocumentPurpose('laden/lossen')).toBe('both');
+  });
+
+  it('is case/space insensitive', () => {
+    expect(normalizeDocumentPurpose('  BOTH ')).toBe('both');
+    expect(normalizeDocumentPurpose('Loading')).toBe('loading');
+  });
+
+  it('returns null for absent/unknown values (so the doc stays 92)', () => {
+    expect(normalizeDocumentPurpose(null)).toBeNull();
+    expect(normalizeDocumentPurpose(undefined)).toBeNull();
+    expect(normalizeDocumentPurpose('')).toBeNull();
+    expect(normalizeDocumentPurpose('invoice')).toBeNull();
+  });
+
+  it('round-trips through the XML type mapping', () => {
+    expect(
+      xmlAttachmentDocumentType(normalizeDocumentPurpose('both')),
+    ).toBe('91');
+    expect(
+      xmlAttachmentDocumentType(normalizeDocumentPurpose('laden')),
+    ).toBe('86');
+    expect(
+      xmlAttachmentDocumentType(normalizeDocumentPurpose('bogus')),
+    ).toBe('92');
   });
 });

@@ -365,6 +365,7 @@ export class XmlService {
                 fileName: true,
                 mimeType: true,
                 contentBase64: true,
+                documentPurpose: true,
               },
             },
           },
