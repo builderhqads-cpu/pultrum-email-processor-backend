@@ -34,7 +34,23 @@ services:
     depends_on:
       - postgres
 
+  # Document-extraction microservice (PDF/DOCX/XLSX -> structured text).
+  # Backend (on the host) reaches it at http://localhost:8000. Heavy first build
+  # (docling + torch); models cache in the docling_models volume.
+  docling:
+    build: ./docling-service
+    container_name: pultrum-docling
+    restart: unless-stopped
+    environment:
+      DOCLING_OCR: "${DOCLING_OCR:-false}"
+      DOCLING_TABLE_STRUCTURE: "${DOCLING_TABLE_STRUCTURE:-true}"
+    ports:
+      - "${DOCLING_PORT:-8000}:8000"
+    volumes:
+      - docling_models:/models
+
 volumes:
   postgres_data:
   redis_data:
   pgadmin_data:
+  docling_models:

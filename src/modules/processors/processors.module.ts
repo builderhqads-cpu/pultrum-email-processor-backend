@@ -21,6 +21,7 @@ import { OrderSplitModule } from '../order-split/order-split.module';
 import { AiReplyModule } from '../ai-reply/ai-reply.module';
 import { FieldMergeService } from '../field-merge/field-merge.service';
 import { GeocodingModule } from '../geocoding/geocoding.module';
+import { DoclingModule } from '../docling/docling.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { GeocodingModule } from '../geocoding/geocoding.module';
     OrderSplitModule,
     AiReplyModule,
     GeocodingModule,
+    DoclingModule,
   ],
   providers: [
     ProcessorsService,

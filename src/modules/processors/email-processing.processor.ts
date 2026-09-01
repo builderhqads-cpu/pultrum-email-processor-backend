@@ -39,6 +39,8 @@ import {
   parseExcludedPartyNames,
 } from '../../utils/order-exclusion';
 import { applyDeelladingDivision } from '../../utils/deellading';
+import { classifyEmailForProcessing } from '../../utils/email-filter';
+import { DoclingService } from '../docling/docling.service';
 import {
   FieldMergeService,
   type MergeableField,
@@ -71,6 +73,7 @@ export class EmailProcessingProcessor extends WorkerHost {
     private readonly aiReplyService: AiReplyService,
     private readonly addressEnrichmentService: AddressEnrichmentService,
     private readonly configService: ConfigService,
+    private readonly doclingService: DoclingService,
   ) {
     super();
   }
@@ -410,6 +413,38 @@ export class EmailProcessingProcessor extends WorkerHost {
     return ['1', 'true', 'yes', 'y', 'on'].includes(raw.toLowerCase());
   }
 
+  /** Deterministic inbound pre-filter (cost). Opt-in; off by default. */
+  private emailFilterEnabled(): boolean {
+    const raw = (
+      this.configService.get<string>('EMAIL_FILTER_ENABLED') ?? ''
+    ).trim();
+    return ['1', 'true', 'yes', 'y', 'on'].includes(raw.toLowerCase());
+  }
+
+  private emailFilterBlockSenders(): string[] {
+    return (this.configService.get<string>('EMAIL_FILTER_BLOCK_SENDERS') ?? '')
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+  }
+
+  /**
+   * Decode just the MIME header block from the stored raw .eml (base64). Only the
+   * head is decoded (~18KB) so we never expand megabytes of base64 attachments
+   * to read a handful of headers.
+   */
+  private extractMimeHeaderBlock(rawMimeBase64?: string | null): string {
+    const b64 = (rawMimeBase64 ?? '').trim();
+    if (!b64) return '';
+    try {
+      const head = Buffer.from(b64.slice(0, 24000), 'base64').toString('utf8');
+      const end = head.search(/\r?\n\r?\n/);
+      return end >= 0 ? head.slice(0, end) : head;
+    } catch {
+      return '';
+    }
+  }
+
   /**
    * NEW FLOW. Send the raw .eml to the AI, then store whatever it returns:
    * the classification + the order(s) (1 or many). No extraction/split on our
@@ -448,12 +483,26 @@ export class EmailProcessingProcessor extends WorkerHost {
       emailSubject: email.subject,
       fieldValues: profileFields,
     });
+    // Docling: forward the text we already extracted from each attachment, so the
+    // router can use it instead of parsing the PDFs from the .eml. Empty when
+    // docling is off (extractedText stays null) -> the option is simply omitted.
+    const extractedAttachments = (email.attachments ?? [])
+      .filter((a) => ((a.extractedText ?? '') as string).trim())
+      .map((a) => ({
+        filename: a.fileName ?? 'attachment',
+        text: ((a.extractedText ?? '') as string).trim(),
+      }));
+
     const analysis = await this.aiExtractionService.analyzeEmail(eml, {
       detectedFields: [
         ...this.toProfileDetectedFields(profileFields),
         ...preDetectedZipcodes,
       ],
       customerProfile: this.toCustomerProfileContext(clientProfile),
+      attachments: extractedAttachments,
+      // Used only when the .eml is omitted: keeps subject + body in the payload.
+      emailSubject: email.subject,
+      emailBody: email.bodyText ?? null,
     });
     if (!analysis) {
       throw new Error(`AI analysis returned null for emailMessageId=${email.id}`);
@@ -1334,17 +1383,52 @@ export class EmailProcessingProcessor extends WorkerHost {
   }
 
   private async extractAttachmentTextIfNeeded(emailMessage: any) {
-    // New flow: the AI parses the .eml (incl. attachments) on its side, so our
-    // OCR/text extraction is redundant. We still download/store the attachment
-    // bytes for the panel — only the costly text extraction is skipped here.
-    if (this.aiEmailAnalysisEnabled()) return;
-
     const attachments = (emailMessage?.attachments ?? []) as Array<{
       id: string;
+      fileName?: string | null;
+      mimeType?: string | null;
+      contentBase64?: string | null;
       extractedText?: string | null;
     }>;
-    if (!attachments.length) return;
 
+    // Docling: extract structured text (PDF/DOCX/XLSX) via the microservice and
+    // store it, so it can be forwarded to the router. Runs in BOTH flows when
+    // enabled; best-effort — a failure leaves the attachment as-is and the router
+    // still gets the .eml. Off by default (DOCLING_ENABLED).
+    if (this.doclingService.enabled) {
+      for (const att of attachments) {
+        if (!att?.id) continue;
+        if (att.extractedText && att.extractedText.trim()) continue;
+        if (!att.contentBase64 || !att.contentBase64.trim()) continue;
+        const text = await this.doclingService.extractText({
+          fileName: att.fileName ?? 'attachment',
+          mimeType: att.mimeType,
+          contentBase64: att.contentBase64,
+        });
+        if (text) {
+          await this.prismaService.attachment.update({
+            where: { id: att.id },
+            data: {
+              extractedText: text,
+              extractionMethod: 'docling',
+              extractionStatus: AttachmentExtractionStatus.SUCCESS,
+            },
+          });
+          att.extractedText = text; // reflect in-memory for downstream use
+          this.logger.log(
+            `Docling extracted ${text.length} chars from ${att.fileName ?? att.id}`,
+          );
+        }
+      }
+      return;
+    }
+
+    // New flow (docling off): the AI parses the .eml (incl. attachments) on its
+    // side, so our OCR/text extraction is redundant. We still download/store the
+    // attachment bytes for the panel — only the costly text extraction is skipped.
+    if (this.aiEmailAnalysisEnabled()) return;
+
+    if (!attachments.length) return;
     for (const att of attachments) {
       if (!att?.id) continue;
       if (att.extractedText && att.extractedText.trim()) continue;
@@ -1898,6 +1982,42 @@ export class EmailProcessingProcessor extends WorkerHost {
         `Email parked (department ${mailboxDepartment} not handled by this pipeline) emailMessageId=${emailForValidation.id}`,
       );
       return;
+    }
+
+    // Deterministic pre-filter (cost): skip high-confidence non-orders (auto-reply,
+    // out-of-office, bounce, system sender) BEFORE any AI call. Pure rules, no AI;
+    // conservative — when unsure it lets the email through. Opt-in via
+    // EMAIL_FILTER_ENABLED so production behaviour only changes when turned on.
+    if (this.emailFilterEnabled()) {
+      const decision = classifyEmailForProcessing({
+        fromEmail: emailForValidation.fromEmail,
+        subject: emailForValidation.subject,
+        rawHeaders: this.extractMimeHeaderBlock(
+          (emailForValidation as { rawMimeBase64?: string | null }).rawMimeBase64,
+        ),
+        blockSenders: this.emailFilterBlockSenders(),
+      });
+      if (!decision.process) {
+        await this.auditLogService.log({
+          entityType: 'EmailMessage',
+          entityId: emailForValidation.id,
+          action: 'EMAIL_FILTERED_NOT_PROCESSED',
+          detailsJson: { reason: decision.reason },
+        });
+        await this.prismaService.emailMessage.update({
+          where: { id: emailForValidation.id },
+          data: {
+            status: EmailStatus.PROCESSED,
+            isTransportOrder: false,
+            classificationReason: `Filtro determinístico: ${decision.reason}`,
+            classifiedAt: new Date(),
+          },
+        });
+        this.logger.log(
+          `Email filtered (no AI) emailMessageId=${emailForValidation.id} reason=${decision.reason}`,
+        );
+        return;
+      }
     }
 
     await this.prismaService.emailMessage.update({

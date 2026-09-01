@@ -307,6 +307,19 @@ export class AiExtractionService {
     return (this.configService.get<string>('AI_API_KEY') || '').trim();
   }
 
+  /**
+   * Cost test: when we already have attachment text (docling), drop the heavy
+   * .eml (base64 PDFs) from the /eml-process payload. Off by default; the router
+   * must be using attachments[].text before this is turned on. Only omits the
+   * .eml when attachment text is actually present.
+   */
+  private omitEmlWithAttachments(): boolean {
+    const raw = (
+      this.configService.get<string>('AI_OMIT_EML_WITH_ATTACHMENTS') ?? ''
+    ).trim();
+    return ['1', 'true', 'yes', 'y', 'on'].includes(raw.toLowerCase());
+  }
+
   private normalizeFieldMap(input: any): Record<string, string> {
     const fields: Record<string, string> = {};
     if (!input || typeof input !== 'object') return fields;
@@ -827,6 +840,18 @@ export class AiExtractionService {
     options?: {
       detectedFields?: AiPreDetectedField[];
       customerProfile?: AiCustomerProfileContext | null;
+      // Pre-extracted attachment text (docling). When present, sent alongside the
+      // .eml so the router can use it instead of parsing the PDFs itself.
+      attachments?: Array<{
+        filename: string;
+        mimeType?: string | null;
+        text: string;
+      }>;
+      // Subject + plain-text body. Sent WHEN the .eml is omitted, so the router
+      // still has the email context (some orders carry info in the body, not the
+      // attachment).
+      emailSubject?: string | null;
+      emailBody?: string | null;
     },
   ): Promise<AiEmailAnalysis | null> {
     const url = this.resolveEmlProcessUrl();
@@ -864,8 +889,18 @@ export class AiExtractionService {
     try {
       // Built ONCE and echoed back on the result, so the audit trail shows the
       // exact body we sent instead of a hand-rebuilt copy that can drift.
+      const hasAttachmentText = (options?.attachments?.length ?? 0) > 0;
+      // When we have attachment text and the flag is on, drop the .eml (with its
+      // base64 PDFs) to shrink the payload. Only when attachment text exists, so
+      // body-only emails always keep the .eml.
+      const omitEml = this.omitEmlWithAttachments() && hasAttachmentText;
       const requestBody = {
-        emlBase64: eml,
+        // Send the .eml unless we're omitting it (attachment text present + flag
+        // on). Either way ALWAYS include the subject + plain body, so the router
+        // has the email context and it stays visible in the payload.
+        ...(omitEml ? {} : { emlBase64: eml }),
+        emailSubject: options?.emailSubject ?? null,
+        emailBody: options?.emailBody ?? null,
         ...(options?.detectedFields?.length
           ? { detectedFields: options.detectedFields }
           : {}),
@@ -874,7 +909,17 @@ export class AiExtractionService {
         ...(options?.customerProfile?.instructions
           ? { customerProfile: options.customerProfile }
           : {}),
+        // Pre-extracted attachment text (docling). Lets the router skip parsing
+        // the PDFs from the .eml. Only sent when we actually extracted something.
+        ...(options?.attachments?.length
+          ? { attachments: options.attachments }
+          : {}),
       };
+      if (omitEml) {
+        this.logger.log(
+          'Omitting emlBase64 from /eml-process payload (attachment text present)',
+        );
+      }
 
       const res = await fetch(url, {
         method: 'POST',
@@ -907,7 +952,11 @@ export class AiExtractionService {
         // Keep the payload light: the full base64 would bloat the audit row.
         analysis.requestPreview = {
           ...requestBody,
-          emlBase64: `${String(eml).slice(0, 120)}…(${String(eml).length} bytes)`,
+          ...(omitEml
+            ? {}
+            : {
+                emlBase64: `${String(eml).slice(0, 120)}…(${String(eml).length} bytes)`,
+              }),
         };
       }
       return analysis;
