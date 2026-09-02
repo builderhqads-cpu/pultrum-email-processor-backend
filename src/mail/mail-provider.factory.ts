@@ -26,6 +26,16 @@ export class MailProviderFactory {
       return new ImapMailProvider(this.configService);
     }
 
-    return new GraphMailProvider(this.graphAuthService, mailboxEmail);
+    // Intake folder: when set, the sync reads ONLY this custom folder (e.g. the
+    // planner's "AI BOB") instead of the whole Inbox. Empty = Inbox (back-compat).
+    const intakeFolder = (
+      this.configService.get<string>('GRAPH_INTAKE_FOLDER') || ''
+    ).trim();
+
+    return new GraphMailProvider(
+      this.graphAuthService,
+      mailboxEmail,
+      intakeFolder || null,
+    );
   }
 }

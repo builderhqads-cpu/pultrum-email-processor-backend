@@ -28,6 +28,16 @@ export interface NormalizedEmail {
 }
 
 export interface MailProvider {
-  // `since` is a high-water mark: only return messages received at/after it.
-  syncInbox(limit?: number, since?: Date): Promise<NormalizedEmail[]>;
+  /**
+   * List message HEADERS matching the sync window (no raw MIME download). Cheap,
+   * so the caller can dedup against the DB before fetching any .eml. `since` is a
+   * high-water mark: only return messages received at/after it.
+   */
+  listMessages(since?: Date): Promise<NormalizedEmail[]>;
+
+  /**
+   * Download the raw MIME (.eml, base64) for a single message. Returns null when
+   * unavailable, or when the provider already included it in listMessages (IMAP).
+   */
+  fetchRawMime(providerMessageId: string): Promise<string | null>;
 }

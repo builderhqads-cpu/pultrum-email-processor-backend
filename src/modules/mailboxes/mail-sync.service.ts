@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { EmailStatus, Mailbox } from '@prisma/client';
@@ -13,6 +14,7 @@ export class MailSyncService {
   constructor(
     private readonly prismaService: PrismaService,
     private readonly mailProviderFactory: MailProviderFactory,
+    private readonly configService: ConfigService,
     @InjectQueue(QUEUE_EMAIL_PROCESSING)
     private readonly emailProcessingQueue: Queue,
   ) {}
@@ -21,17 +23,28 @@ export class MailSyncService {
     const configuredProvider = this.mailProviderFactory.getConfiguredProvider();
     const provider = this.mailProviderFactory.createForMailbox(mailbox.email);
 
-    // High-water mark: only process emails received at/after this instant, so we
-    // never pull a mailbox's historical backlog into the (expensive) AI
-    // pipeline. Falls back to createdAt if the cutoff was never set.
-    const since = mailbox.processMessagesFrom ?? mailbox.createdAt ?? undefined;
+    // Intake-folder mode: the planner curates a folder (e.g. "AI BOB") with ONLY
+    // order emails, so we process EVERYTHING in it (dedup prevents repeats) and
+    // must NOT apply the date cutoff — a dragged email keeps its original
+    // receivedDateTime, which could be older than the cutoff and be wrongly
+    // dropped. Without a folder, keep the high-water mark so a plain-Inbox sync
+    // never pulls the historical backlog.
+    const intakeFolder = (
+      this.configService.get<string>('GRAPH_INTAKE_FOLDER') || ''
+    ).trim();
+    const since = intakeFolder
+      ? undefined
+      : (mailbox.processMessagesFrom ?? mailbox.createdAt ?? undefined);
 
-    const fetched = await provider.syncInbox(20, since);
+    // List message HEADERS only (cheap, no raw MIME). We dedup against the DB
+    // BEFORE downloading any .eml, so already-imported messages cost nothing and
+    // a curated intake folder is read in full (no top-N blind spot).
+    const listed = await provider.listMessages(since);
     // Authoritative guard (belt-and-suspenders): enforce the cutoff even if the
     // provider ignores the `since` hint.
     const messages = since
-      ? fetched.filter((m) => m.receivedAt.getTime() >= since.getTime())
-      : fetched;
+      ? listed.filter((m) => m.receivedAt.getTime() >= since.getTime())
+      : listed;
 
     if (!messages.length) {
       return {
@@ -66,6 +79,17 @@ export class MailSyncService {
         return false;
       return true;
     });
+
+    // Now — and only now — download the raw .eml, for the NEW messages only.
+    // Graph headers arrive without it; IMAP already includes it (fetchRawMime is
+    // a no-op there). This is the whole point: no .eml download for already-known
+    // messages, so the folder can be listed in full cheaply.
+    for (const message of newMessages) {
+      if (!message.rawMimeBase64) {
+        message.rawMimeBase64 =
+          (await provider.fetchRawMime(message.providerMessageId)) ?? undefined;
+      }
+    }
 
     const imported: Array<{
       emailMessageId: string;

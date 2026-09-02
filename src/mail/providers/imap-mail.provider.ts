@@ -149,10 +149,16 @@ export class ImapMailProvider implements MailProvider {
     return res.accessToken.replace(/\s+/g, '');
   }
 
+  // IMAP fetches full messages (raw MIME included) in listMessages, so there is
+  // nothing to lazily download — this is a no-op.
+  async fetchRawMime(_providerMessageId: string): Promise<string | null> {
+    return null;
+  }
+
   // `_since` is enforced centrally in MailSyncService (post-fetch guard); the
   // IMAP path keeps its simple fetch and lets that guard drop older messages.
-  async syncInbox(limit = 10, _since?: Date): Promise<NormalizedEmail[]> {
-    if (limit <= 0) return [];
+  async listMessages(_since?: Date): Promise<NormalizedEmail[]> {
+    const limit = 50;
 
     const config = this.getConfig();
     const { host, port, secure, user, pass, loginMethod, authType } = config;
