@@ -895,12 +895,16 @@ export class AiExtractionService {
       // body-only emails always keep the .eml.
       const omitEml = this.omitEmlWithAttachments() && hasAttachmentText;
       const requestBody = {
-        // Send the .eml unless we're omitting it (attachment text present + flag
-        // on). Either way ALWAYS include the subject + plain body, so the router
-        // has the email context and it stays visible in the payload.
-        ...(omitEml ? {} : { emlBase64: eml }),
-        emailSubject: options?.emailSubject ?? null,
-        emailBody: options?.emailBody ?? null,
+        // Omitting the .eml: replace it with the subject + plain body so the
+        // router keeps the email context. When the .eml is sent (default), those
+        // fields are NOT added — the .eml already carries them, and adding extra
+        // keys could break a strict router. So the normal payload is unchanged.
+        ...(omitEml
+          ? {
+              emailSubject: options?.emailSubject ?? null,
+              emailBody: options?.emailBody ?? null,
+            }
+          : { emlBase64: eml }),
         ...(options?.detectedFields?.length
           ? { detectedFields: options.detectedFields }
           : {}),
