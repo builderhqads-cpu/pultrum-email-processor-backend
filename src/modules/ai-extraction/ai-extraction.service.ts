@@ -852,6 +852,10 @@ export class AiExtractionService {
       // attachment).
       emailSubject?: string | null;
       emailBody?: string | null;
+      // Email received date (ISO 8601). Anchors relative dates ("next Monday",
+      // "KW36") that the router would otherwise read from the .eml Date header.
+      // Router (Matheus, 2026-09-03) accepts and recommends it; sent always.
+      emailDate?: string | null;
     },
   ): Promise<AiEmailAnalysis | null> {
     const url = this.resolveEmlProcessUrl();
@@ -918,6 +922,9 @@ export class AiExtractionService {
         ...(options?.attachments?.length
           ? { attachments: options.attachments }
           : {}),
+        // Date anchor for relative dates. Safe alongside the .eml (router
+        // ignores unknown keys) and essential once the .eml is omitted.
+        ...(options?.emailDate ? { emailDate: options.emailDate } : {}),
       };
       if (omitEml) {
         this.logger.log(

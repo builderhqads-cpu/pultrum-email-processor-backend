@@ -592,4 +592,61 @@ describe('AiExtractionService', () => {
       Ladehilfsmittel: '2 Holzbalken',
     });
   });
+
+  // /eml-process payload shape. Router (Matheus 2026-09-03) consumes
+  // emailBody+attachments (with emailDate anchor) instead of the base64 .eml.
+  const makeAnalyzeService = (omit: boolean) => {
+    let capturedBody: any = null;
+    const configService: any = {
+      get: jest.fn((key: string) => {
+        if (key === 'AI_API_BASE_URL') return 'https://router.example.com';
+        if (key === 'AI_OMIT_EML_WITH_ATTACHMENTS') return omit ? 'true' : 'false';
+        return undefined;
+      }),
+    };
+    global.fetch = jest.fn(async (_url: any, init: any) => {
+      capturedBody = JSON.parse(init.body);
+      return {
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({ isTransportOrder: true, confidence: 0.9, orders: [] }),
+      } as any;
+    }) as any;
+    const service = new AiExtractionService(
+      configService,
+      {} as any,
+      { log: jest.fn(), warn: jest.fn() } as any,
+      { resolveZipcodeHints: jest.fn(async () => []) } as any,
+    );
+    return { service, getBody: () => capturedBody };
+  };
+
+  const analyzeOpts = {
+    attachments: [{ filename: 'Dispo.xlsx', text: 'ref 26BA008156' }],
+    emailSubject: 'Dispo KW36',
+    emailBody: 'Laden bij Derix maandag 22:00',
+    emailDate: '2026-08-27T19:00:00.000Z',
+  };
+
+  it('analyzeEmail omits emlBase64 and sends body+attachments+emailDate when flag on', async () => {
+    const { service, getBody } = makeAnalyzeService(true);
+    await service.analyzeEmail('RAWEMLBASE64', analyzeOpts);
+    const body = getBody();
+    expect(body.emlBase64).toBeUndefined();
+    expect(body.emailSubject).toBe('Dispo KW36');
+    expect(body.emailBody).toBe('Laden bij Derix maandag 22:00');
+    expect(body.emailDate).toBe('2026-08-27T19:00:00.000Z');
+    expect(body.attachments).toHaveLength(1);
+  });
+
+  it('analyzeEmail keeps emlBase64 (flag off) but still sends emailDate', async () => {
+    const { service, getBody } = makeAnalyzeService(false);
+    await service.analyzeEmail('RAWEMLBASE64', analyzeOpts);
+    const body = getBody();
+    expect(body.emlBase64).toBe('RAWEMLBASE64');
+    expect(body.emailBody).toBeUndefined();
+    expect(body.emailDate).toBe('2026-08-27T19:00:00.000Z');
+    expect(body.attachments).toHaveLength(1);
+  });
 });

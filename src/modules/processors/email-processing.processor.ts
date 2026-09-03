@@ -462,6 +462,7 @@ export class EmailProcessingProcessor extends WorkerHost {
     bodyText?: string | null;
     bodyHtml?: string | null;
     attachments?: Array<{ fileName?: string | null; extractedText?: string | null }>;
+    receivedAt?: Date | null;
     mailbox: { department: Department };
   }): Promise<void> {
     const eml = (email as any).rawMimeBase64 ?? null;
@@ -507,6 +508,11 @@ export class EmailProcessingProcessor extends WorkerHost {
       // Used only when the .eml is omitted: keeps subject + body in the payload.
       emailSubject: email.subject,
       emailBody: email.bodyText ?? null,
+      // Date anchor for relative dates (replaces the .eml Date header). Sent
+      // always; the router ignores it when the .eml is present.
+      emailDate: email.receivedAt
+        ? new Date(email.receivedAt).toISOString()
+        : null,
     });
     if (!analysis) {
       throw new Error(`AI analysis returned null for emailMessageId=${email.id}`);
