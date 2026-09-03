@@ -722,8 +722,11 @@ export class XmlService {
       .ele('zipcode')
       .txt(this.getFieldValue(fieldMap, 'pickup_zipcode'))
       .up();
+    // matchmode 14 (not 4): tolerant city match in Transpas. Small spelling
+    // differences between the customer's place name and Transpas master data
+    // left loading/delivery places unmatched; 14 resolves it (Rick/Hoekstra).
     pickup
-      .ele('city_id', { matchmode: '4' })
+      .ele('city_id', { matchmode: '14' })
       .txt(this.getFieldValue(fieldMap, 'pickup_city'))
       .up();
     pickup
@@ -775,8 +778,9 @@ export class XmlService {
       .ele('zipcode')
       .txt(this.getFieldValue(fieldMap, 'delivery_zipcode'))
       .up();
+    // matchmode 14 (not 4): tolerant city match in Transpas — see pickup above.
     delivery
-      .ele('city_id', { matchmode: '4' })
+      .ele('city_id', { matchmode: '14' })
       .txt(this.getFieldValue(fieldMap, 'delivery_city'))
       .up();
     delivery
