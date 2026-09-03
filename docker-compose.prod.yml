@@ -63,6 +63,28 @@ services:
     depends_on:
       - api
 
+  # Document-extraction microservice (PDF/DOCX/XLSX -> structured text).
+  # DEFINED BUT NOT STARTED: guarded by the "docling" compose profile, so a
+  # normal `up` never launches it (and deploy.sh only ups `api` anyway). No
+  # published port — the api reaches it INTERNALLY at http://docling:8000 once
+  # DOCLING_ENABLED=true is set in .env. The api does NOT depend_on it, so the
+  # stack runs unchanged while it is off. Heavy first build (docling + torch);
+  # models cache in the docling_models volume.
+  # To turn it on later:
+  #   docker compose -f docker-compose.prod.yml --profile docling up -d --build docling
+  docling:
+    build: ./docling-service
+    image: pultrum-docling
+    container_name: pultrum-docling
+    restart: unless-stopped
+    profiles: ["docling"]
+    environment:
+      DOCLING_OCR: "${DOCLING_OCR:-false}"
+      DOCLING_TABLE_STRUCTURE: "${DOCLING_TABLE_STRUCTURE:-false}"
+    volumes:
+      - docling_models:/models
+
 volumes:
   postgres_data:
   redis_data:
+  docling_models:
