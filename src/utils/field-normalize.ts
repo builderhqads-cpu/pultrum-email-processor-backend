@@ -403,10 +403,21 @@ export function routeTimeBounds(
     apply(FROM_RE, 'from');
   }
 
-  // Niek: when only a start time is given ("time from") and no "time till",
-  // the deadline equals the start — you must be there punctually at that time.
-  // Applies to pickup and delivery. Asymmetric: a lone "time till" leaves the
-  // "time from" empty (never copied back).
+  return fillMissingTimeTill(out);
+}
+
+/**
+ * Niek: when only a start time is given ("time from") and no "time till", the
+ * deadline equals the start — the driver must be there punctually at that time.
+ * Applies to pickup and delivery. Asymmetric on purpose: a lone "time till"
+ * leaves the "time from" empty (never copied back). Extracted so the router
+ * path (analyzeEmail output) can apply it too — routeTimeBounds is not the only
+ * entry point for AI-produced fields.
+ */
+export function fillMissingTimeTill(
+  fields: Record<string, unknown>,
+): Record<string, unknown> {
+  const out = { ...fields };
   for (const side of ['pickup', 'delivery'] as const) {
     const fromKey = `${side}_time`;
     const tillKey = `${side}_time_till`;
@@ -416,6 +427,5 @@ export function routeTimeBounds(
       out[tillKey] = from;
     }
   }
-
   return out;
 }

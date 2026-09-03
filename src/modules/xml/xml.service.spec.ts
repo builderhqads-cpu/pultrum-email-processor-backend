@@ -220,6 +220,9 @@ describe('XmlService generateOrderXml normalization', () => {
 
     expect(xml).toContain('<address1>Industriestraße 45</address1>');
     expect(xml).toContain('<datetill>2026-07-16</datetill>');
+    // Niek 2026-09-03: deliveryaddress emits a present-but-empty <datetill/> so
+    // Transpas does not default "Losdatum tot" to the delivery date.
+    expect(xml).toMatch(/<deliveryaddress>[\s\S]*?<datetill\/>[\s\S]*?<time>/);
     expect(xml).toContain('<loadingmeter>96.0</loadingmeter>');
     expect(xml).toContain('<volume>737.280</volume>');
     // Both cargo AND goodsline unit_id carry matchmode="1" (Creative Gears):

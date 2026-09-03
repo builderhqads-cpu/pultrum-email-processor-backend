@@ -33,7 +33,11 @@ import { AiReplyService } from '../ai-reply/ai-reply.service';
 import { AddressEnrichmentService } from '../geocoding/address-enrichment.service';
 import type { SplitResult } from '../order-split/order-split.types';
 import { sanitizeExtractedValue } from '../../utils/sanitize';
-import { routeTimeBounds, widthMmToCm } from '../../utils/field-normalize';
+import {
+  fillMissingTimeTill,
+  routeTimeBounds,
+  widthMmToCm,
+} from '../../utils/field-normalize';
 import {
   isExcludedParty,
   parseExcludedPartyNames,
@@ -744,10 +748,13 @@ export class EmailProcessingProcessor extends WorkerHost {
         // Niek #12: carry the AI's unmapped extras onto the order so they show
         // in the "Additional information" section (as unknown-key OPTIONAL
         // fields). Mapped/known fields win on any key collision.
-        const finalFields = {
+        // fillMissingTimeTill: the router (analyzeEmail) does not pass through
+        // routeTimeBounds, so mirror "time -> time_till" here too, or a lone
+        // "Laadtijd/Lostijd van" leaves the "tot" empty in Transpas (Niek).
+        const finalFields = fillMissingTimeTill({
           ...(o.unmappedFields ?? {}),
           ...mergedKnownFields,
-        };
+        });
 
         // Niek (Derix): the sheet width is in mm and the AI leaves it
         // unconverted ("240" should be 24 cm). Divide ONLY the width by 10 —
@@ -1004,7 +1011,9 @@ export class EmailProcessingProcessor extends WorkerHost {
               order.emailMessage?.subject ??
               existingOrder.emailMessage?.subject ??
               '',
-            fieldValues: fields,
+            // Mirror "time -> time_till" on the reply/consolidation path too
+            // (router output bypasses routeTimeBounds). See fillMissingTimeTill.
+            fieldValues: fillMissingTimeTill(fields),
             source: 'ai',
           },
           { enqueueJobs: !isBatchReply },

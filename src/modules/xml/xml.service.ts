@@ -619,6 +619,7 @@ export class XmlService {
 
     const pickupDateTill = this.getFieldValue(fieldMap, 'pickup_date_till');
     const pickupTimeTill = this.getFieldValue(fieldMap, 'pickup_time_till');
+    const deliveryDateTill = this.getFieldValue(fieldMap, 'delivery_date_till');
     const deliveryTimeTill = this.getFieldValue(fieldMap, 'delivery_time_till');
 
     const valuesForValidation = Object.fromEntries(
@@ -752,6 +753,11 @@ export class XmlService {
       .ele('date')
       .txt(this.getFieldValue(fieldMap, 'delivery_date'))
       .up();
+    // Emit datetill even when empty, exactly like pickupaddress above. When the
+    // element is ABSENT, Transpas defaults the "Losdatum tot" to the delivery
+    // date; a present-but-empty <datetill/> keeps it empty, which is what Niek
+    // wants (a lone delivery date must not produce a date-till).
+    delivery.ele('datetill').txt(deliveryDateTill).up();
     delivery
       .ele('time')
       .txt(this.getFieldValue(fieldMap, 'delivery_time'))

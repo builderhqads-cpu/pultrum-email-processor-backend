@@ -3,6 +3,7 @@ import {
   blankIfZeroPreservingDecimalString,
   dashLtReference,
   dropNameIfCity,
+  fillMissingTimeTill,
   widthMmToCm,
   normalizeFieldMap,
   normalizeQuantity,
@@ -95,6 +96,34 @@ describe('field-normalize', () => {
         '',
       );
       expect(out.delivery_time_till).toBe('09:00');
+    });
+  });
+
+  // The router (analyzeEmail) output does not pass through routeTimeBounds, so
+  // the processor calls fillMissingTimeTill directly. Same mirror rule (Niek).
+  describe('fillMissingTimeTill', () => {
+    it('mirrors *_time into an empty *_time_till for pickup and delivery', () => {
+      const out = fillMissingTimeTill({
+        pickup_time: '08:00',
+        delivery_time: '07:00',
+      });
+      expect(out.pickup_time_till).toBe('08:00');
+      expect(out.delivery_time_till).toBe('07:00');
+    });
+
+    it('keeps an explicit *_time_till and never fills *_time back', () => {
+      const out = fillMissingTimeTill({
+        delivery_time: '07:00',
+        delivery_time_till: '09:00',
+        pickup_time_till: '09:00',
+      });
+      expect(out.delivery_time_till).toBe('09:00');
+      expect(out.pickup_time).toBeUndefined();
+    });
+
+    it('does not touch dates (Losdatum tot stays untouched here)', () => {
+      const out = fillMissingTimeTill({ delivery_date: '2026-08-28' });
+      expect(out.delivery_date_till).toBeUndefined();
     });
   });
 
