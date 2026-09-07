@@ -1,8 +1,66 @@
 import {
+  isXmlDocumentAttachment,
   normalizeDocumentPurpose,
   xmlAttachmentConcerns,
   xmlAttachmentDocumentType,
 } from './xml-documents';
+
+describe('isXmlDocumentAttachment (Niek #4)', () => {
+  const b64 = 'Zm9v'; // non-empty content
+
+  it('excludes Outlook inline signature images (image001.png, ...)', () => {
+    for (const name of [
+      'image001.png',
+      'image002.jpg',
+      'image012.jpeg',
+      'IMAGE003.GIF',
+      'image1.webp',
+    ]) {
+      expect(
+        isXmlDocumentAttachment({
+          fileName: name,
+          mimeType: 'image/png',
+          contentBase64: b64,
+        }),
+      ).toBe(false);
+    }
+  });
+
+  it('keeps real photos and business documents', () => {
+    expect(
+      isXmlDocumentAttachment({
+        fileName: 'route-unloading.jpg',
+        mimeType: 'image/jpeg',
+        contentBase64: b64,
+      }),
+    ).toBe(true);
+    expect(
+      isXmlDocumentAttachment({
+        fileName: 'Dispoliste KW36.pdf',
+        mimeType: 'application/pdf',
+        contentBase64: b64,
+      }),
+    ).toBe(true);
+    // A photo whose name isn't the Outlook auto-pattern stays included.
+    expect(
+      isXmlDocumentAttachment({
+        fileName: 'IMG_2043.png',
+        mimeType: 'image/png',
+        contentBase64: b64,
+      }),
+    ).toBe(true);
+  });
+
+  it('still excludes attachments without content', () => {
+    expect(
+      isXmlDocumentAttachment({
+        fileName: 'route.pdf',
+        mimeType: 'application/pdf',
+        contentBase64: '',
+      }),
+    ).toBe(false);
+  });
+});
 
 describe('xmlAttachmentDocumentType (Niek #6)', () => {
   it('maps loading/unloading/both to 86/87/91 (EN and NL synonyms)', () => {

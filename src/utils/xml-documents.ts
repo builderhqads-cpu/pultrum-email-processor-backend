@@ -21,6 +21,13 @@ export function isXmlDocumentAttachment(input: {
   const mime = (input.mimeType || '').trim().toLowerCase();
   const fileName = (input.fileName || '').trim().toLowerCase();
 
+  // Niek #4: Outlook embeds signature logos/icons as INLINE images auto-named
+  // image001.png, image002.jpg, ... These are not business documents, but they
+  // passed the image check below and were emitted in <documents> — and once the
+  // AI classified them, as laden/lossen (86/87). Drop the embedded-image names
+  // so a corporate signature never becomes a transport document.
+  if (/^image\d+\.(png|jpe?g|gif|bmp|webp)$/.test(fileName)) return false;
+
   return (
     mime === 'application/pdf' ||
     mime === 'application/msword' ||
