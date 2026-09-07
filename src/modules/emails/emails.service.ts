@@ -108,7 +108,23 @@ export class EmailsService {
       include: {
         mailbox: true,
         attachments: true,
-        orders: { orderBy: { batchSequence: 'asc' } },
+        // Only the fields the response actually uses — a batch email can carry
+        // dozens of orders, and full rows include heavy columns (rawOrderText)
+        // that would bloat the detail payload for nothing (timeout on big batches).
+        orders: {
+          orderBy: { batchSequence: 'asc' },
+          select: {
+            id: true,
+            status: true,
+            externalReference: true,
+            batchSequence: true,
+            department: true,
+            type: true,
+            overallConfidence: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        },
         batchImports: { orderBy: { createdAt: 'desc' }, take: 1 },
         linkedOrder: true,
       },
