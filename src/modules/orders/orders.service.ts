@@ -12,15 +12,11 @@ import { PrismaService } from '../../prisma/prisma.service';
 import {
   CustomerReplyDraftStatus,
   Department,
-  FieldRequirement,
   OrderFieldSource,
   OrderStatus,
 } from '@prisma/client';
 import { ClientProfileService } from '../client-profiles/client-profile.service';
-import {
-  getRuleRequirement,
-  TRANSPORT_BOOKING_FIELD_RULES,
-} from '../required-fields/transport-booking-field-rules';
+import { TRANSPORT_BOOKING_FIELD_RULES } from '../required-fields/transport-booking-field-rules';
 import { routeTimeBounds } from '../../utils/field-normalize';
 import {
   QUEUE_AI_REQUEST,
@@ -596,6 +592,7 @@ export class OrdersService {
             graphMessageId: true,
             subject: true,
             bodyText: true,
+            receivedAt: true,
             attachments: { select: { extractedText: true } },
           },
         },
@@ -683,8 +680,12 @@ export class OrdersService {
       emailMessageId: string;
       customerEmail: string;
       department: Department;
+      externalReference: string | null;
       rawOrderText: string | null;
-      emailMessage: { subject?: string | null } | null;
+      emailMessage: {
+        subject?: string | null;
+        receivedAt?: Date | null;
+      } | null;
     },
     existingFields: Record<string, string>,
   ): Promise<void> {
@@ -707,7 +708,11 @@ export class OrdersService {
       emailMessageId: string;
       customerEmail: string;
       department: Department;
-      emailMessage: { subject?: string | null } | null;
+      externalReference: string | null;
+      emailMessage: {
+        subject?: string | null;
+        receivedAt?: Date | null;
+      } | null;
     },
     existingFields: Record<string, string>,
     text: string,
@@ -738,46 +743,48 @@ export class OrdersService {
     const detectedHints = Object.entries(known)
       .filter(([key, value]) => value && !technical.has(key))
       .map(([key, value]) => ({ key, label: key, value, confidence: 0.85 }));
-    const missingHints = TRANSPORT_BOOKING_FIELD_RULES.filter(
-      (r) => getRuleRequirement(r) === FieldRequirement.REQUIRED && !known[r.key],
-    ).map((r) => ({
-      key: r.key,
-      label: r.label,
-      requirement: FieldRequirement.REQUIRED,
-      reason: 'Not detected in order content',
-    }));
 
-    // AI fills the gaps. If this throws, NOTHING has been written yet, so the
-    // order keeps all of its current data.
-    const aiPayload = {
-      orderId: order.id,
-      customerEmail: order.customerEmail ?? null,
-      subject: order.emailMessage?.subject ?? null,
-      bodyText: null,
-      attachmentsText: null,
-      combinedText: text,
-      requiredFields: TRANSPORT_BOOKING_FIELD_RULES,
-      detectedFields: detectedHints,
-      missingFields: missingHints,
-      department: order.department ?? null,
-      language: null,
-      emailMetadata: {
-        fromEmail: order.customerEmail ?? null,
-        fromName: null,
-        receivedAt: null,
-      },
-      clientProfile: profile
-        ? this.clientProfileService.payloadSummary(profile)
+    // Reprocess through the SAME /eml-process route as initial processing, so
+    // the profile's aiInstructions actually reach the AI (Niek #3). The legacy
+    // extract route only sent payloadSummary (no instructions), so editing a
+    // profile's instructions and reprocessing showed no change. This is a
+    // body-only call: no .eml, the order's stored text goes in as emailBody.
+    // If it throws, NOTHING has been written yet, so the order keeps its data.
+    const customerProfile =
+      profile && (profile.aiInstructions ?? '').trim()
+        ? {
+            name: profile.name,
+            instructions: (profile.aiInstructions as string).trim(),
+          }
+        : null;
+
+    const analysis = await this.aiExtractionService.analyzeEmail(null, {
+      emailSubject: order.emailMessage?.subject ?? null,
+      emailBody: text,
+      emailDate: order.emailMessage?.receivedAt
+        ? new Date(order.emailMessage.receivedAt).toISOString()
         : null,
-    };
+      customerProfile,
+      detectedFields: detectedHints,
+    });
 
-    const aiResult = await this.aiExtractionService.extract(aiPayload);
+    // We reprocess ONE order's text, so the AI returns ~1 order; match by
+    // externalReference when present, else take the first.
+    const returnedOrders = analysis?.orders ?? [];
+    const extRef = (order.externalReference ?? '').toString().trim();
+    const pickedOrder =
+      (extRef
+        ? returnedOrders.find(
+            (o) => (o.externalReference ?? '').toString().trim() === extRef,
+          )
+        : undefined) ?? returnedOrders[0];
+    const aiFields = pickedOrder?.fields ?? {};
 
     // Non-destructive merge: keep everything we already have; the AI only FILLS
     // EMPTY fields (never overwrites). The client-profile preset is the only
     // authoritative source. Single write -> a reprocess can add but never lose.
     const merged: Record<string, unknown> = { ...existingFields };
-    for (const [k, v] of Object.entries(aiResult?.fields ?? {})) {
+    for (const [k, v] of Object.entries(aiFields)) {
       if (!merged[k] && v != null && v.toString().trim() !== '') merged[k] = v;
     }
     Object.assign(merged, presetFields);

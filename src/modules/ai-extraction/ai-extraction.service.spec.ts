@@ -649,4 +649,29 @@ describe('AiExtractionService', () => {
     expect(body.emailDate).toBe('2026-08-27T19:00:00.000Z');
     expect(body.attachments).toHaveLength(1);
   });
+
+  // Body-only call (reprocess from stored order text): no .eml, so it always
+  // omits emlBase64 and sends emailBody + the profile instructions, even with
+  // the flag OFF — this is what makes reprocess honor an edited profile (Niek #3).
+  it('analyzeEmail body-only (no .eml) sends emailBody + instructions with flag off', async () => {
+    const { service, getBody } = makeAnalyzeService(false);
+    const res = await service.analyzeEmail(null, {
+      emailSubject: 'Reprocess',
+      emailBody: 'Laden bij Derix maandag 22:00',
+      emailDate: '2026-08-27T19:00:00.000Z',
+      customerProfile: { name: 'Derix', instructions: 'Laadreferentie: TR + LT' },
+    });
+    expect(res).not.toBeNull();
+    const body = getBody();
+    expect(body.emlBase64).toBeUndefined();
+    expect(body.emailBody).toBe('Laden bij Derix maandag 22:00');
+    expect(body.emailDate).toBe('2026-08-27T19:00:00.000Z');
+    expect(body.customerProfile?.instructions).toContain('Laadreferentie');
+  });
+
+  it('analyzeEmail returns null when there is no .eml and no emailBody', async () => {
+    const { service } = makeAnalyzeService(false);
+    const res = await service.analyzeEmail(null, { emailSubject: 'x' });
+    expect(res).toBeNull();
+  });
 });

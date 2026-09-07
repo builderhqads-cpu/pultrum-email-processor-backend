@@ -863,8 +863,11 @@ export class AiExtractionService {
       this.logger.warn('AI_API_BASE_URL not configured; skipping AI analysis');
       return null;
     }
-    if (!eml) {
-      this.logger.warn('No raw email (.eml) available; skipping AI analysis');
+    const hasBody = !!(options?.emailBody ?? '').trim();
+    if (!eml && !hasBody) {
+      this.logger.warn(
+        'No raw email (.eml) or emailBody available; skipping AI analysis',
+      );
       return null;
     }
     try {
@@ -894,10 +897,12 @@ export class AiExtractionService {
       // Built ONCE and echoed back on the result, so the audit trail shows the
       // exact body we sent instead of a hand-rebuilt copy that can drift.
       const hasAttachmentText = (options?.attachments?.length ?? 0) > 0;
-      // When we have attachment text and the flag is on, drop the .eml (with its
-      // base64 PDFs) to shrink the payload. Only when attachment text exists, so
-      // body-only emails always keep the .eml.
-      const omitEml = this.omitEmlWithAttachments() && hasAttachmentText;
+      // Drop the .eml (with its base64 PDFs) when either: there is no .eml at all
+      // (body-only call, e.g. a reprocess from stored order text) — nothing to
+      // send but the subject/body; OR the flag is on and we have attachment text.
+      // Initial processing (a real .eml present, flag off) is unchanged.
+      const omitEml =
+        !eml || (this.omitEmlWithAttachments() && hasAttachmentText);
       const requestBody = {
         // Omitting the .eml: replace it with the subject + plain body so the
         // router keeps the email context. When the .eml is sent (default), those
@@ -928,7 +933,7 @@ export class AiExtractionService {
       };
       if (omitEml) {
         this.logger.log(
-          'Omitting emlBase64 from /eml-process payload (attachment text present)',
+          'Omitting emlBase64 from /eml-process payload (sending emailSubject/emailBody + attachments)',
         );
       }
 
