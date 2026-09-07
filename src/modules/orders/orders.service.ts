@@ -624,53 +624,79 @@ export class OrdersService {
         .catch(() => undefined),
     ]);
 
-    // Batch order: reprocess ONLY this order from its stored rawOrderText,
-    // NON-destructively. We do NOT wipe the order's fields first — if the AI
-    // call fails, the existing data must stay intact. The single re-fill at the
-    // end is the only write, and it preserves everything already present.
-    if (order.batchImportId && order.rawOrderText) {
-      await this.refillBatchOrder(order, existingFields);
-      // Rebuild the ONE consolidated reply for the batch (also clears any stale
-      // per-order drafts on sibling orders).
-      await this.aiReplyService
-        .generateConsolidatedMissingInfoReply(order.batchImportId)
-        .catch(() => undefined);
+    // The AI refill goes through /eml-process (up to 3 LLM passes) and can take
+    // MINUTES, so we do NOT hold the HTTP request open for it — the client would
+    // time out. Mark the order PROCESSING (the UI polls active orders), run the
+    // non-destructive refill in the BACKGROUND, and return immediately. The
+    // refill's own single write sets the final status; on failure we restore the
+    // previous status so the order never gets stuck.
+    const previousStatus = order.status;
+    await this.prismaService.transportOrder.update({
+      where: { id: order.id },
+      data: { status: OrderStatus.PROCESSING },
+    });
+
+    const runRefill = async () => {
+      if (order.batchImportId && order.rawOrderText) {
+        // Batch order: reprocess ONLY this order from its stored rawOrderText,
+        // NON-destructively (the single re-fill preserves everything present).
+        await this.refillBatchOrder(order, existingFields);
+        // Rebuild the ONE consolidated reply for the batch (also clears any
+        // stale per-order drafts on sibling orders).
+        await this.aiReplyService
+          .generateConsolidatedMissingInfoReply(order.batchImportId)
+          .catch(() => undefined);
+        await this.auditLogService.log({
+          entityType: 'TransportOrder',
+          entityId: order.id,
+          action: 'BATCH_ORDER_REPROCESSED',
+          detailsJson: { externalReference: order.externalReference },
+        });
+        return;
+      }
+
+      // Single order: NON-destructive re-fill from the email content (body +
+      // already-extracted attachment text). We do NOT wipe the fields or re-run
+      // the whole .eml pipeline from scratch, so values merged from customer
+      // replies (e.g. a delivery date/zipcode supplied in a reply) survive.
+      const combinedText = [
+        order.emailMessage?.bodyText ?? '',
+        ...(order.emailMessage?.attachments ?? []).map(
+          (a) => a.extractedText ?? '',
+        ),
+      ]
+        .map((t) => (t ?? '').toString().trim())
+        .filter((t) => t.length > 0)
+        .join('\n\n');
+
+      await this.refillOrderFromText(order, existingFields, combinedText);
+
       await this.auditLogService.log({
         entityType: 'TransportOrder',
         entityId: order.id,
-        action: 'BATCH_ORDER_REPROCESSED',
-        detailsJson: { externalReference: order.externalReference },
+        action: 'ORDER_REPROCESSED',
+        detailsJson: {
+          emailMessageId: order.emailMessageId,
+          mode: 'non_destructive_refill',
+          preservedFields: Object.keys(existingFields).length,
+        } as any,
       });
-      return { enqueued: false, reprocessedOrder: true };
-    }
+    };
 
-    // Single order: NON-destructive re-fill from the email content (body +
-    // already-extracted attachment text). We do NOT wipe the fields or re-run
-    // the whole .eml pipeline from scratch, so values merged from customer
-    // replies (e.g. a delivery date/zipcode supplied in a reply) survive a
-    // reprocess. Same guarantee the batch path already gives: add, never lose.
-    const combinedText = [
-      order.emailMessage?.bodyText ?? '',
-      ...(order.emailMessage?.attachments ?? []).map((a) => a.extractedText ?? ''),
-    ]
-      .map((t) => (t ?? '').toString().trim())
-      .filter((t) => t.length > 0)
-      .join('\n\n');
-
-    await this.refillOrderFromText(order, existingFields, combinedText);
-
-    await this.auditLogService.log({
-      entityType: 'TransportOrder',
-      entityId: order.id,
-      action: 'ORDER_REPROCESSED',
-      detailsJson: {
-        emailMessageId: order.emailMessageId,
-        mode: 'non_destructive_refill',
-        preservedFields: Object.keys(existingFields).length,
-      } as any,
+    void runRefill().catch(async (err: any) => {
+      this.logger.error(
+        `Background reprocess failed for order ${order.id}: ${err?.message ?? err}`,
+      );
+      // Don't leave it stuck as PROCESSING.
+      await this.prismaService.transportOrder
+        .update({
+          where: { id: order.id },
+          data: { status: previousStatus },
+        })
+        .catch(() => undefined);
     });
 
-    return { enqueued: false, reprocessedOrder: true };
+    return { enqueued: true, reprocessedOrder: true };
   }
 
   /** Re-fill a single batch order from its stored rawOrderText (no siblings). */
