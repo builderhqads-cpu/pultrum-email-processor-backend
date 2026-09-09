@@ -18,11 +18,32 @@ export class HealthController {
       this.configService.get<string>('CREATIVE_GEARS_API_URL') || ''
     ).trim();
 
+    let creativeGearsEndpoint: string | null = null;
+    if (creativeGearsApiUrl) {
+      try {
+        creativeGearsEndpoint = new URL(creativeGearsApiUrl).host;
+      } catch {
+        creativeGearsEndpoint = creativeGearsApiUrl;
+      }
+    }
+
     const aiApiUrl = (
       this.configService.get<string>('AI_API_URL') ||
       this.configService.get<string>('AI_API_BASE_URL') ||
       ''
     ).trim();
+
+    // Identifier of the AI router endpoint (host only — no key/path). Lets the UI
+    // show WHICH router is wired (e.g. the "-teste" one vs production) without
+    // exposing anything secret. The URL itself is not a credential.
+    let aiEndpoint: string | null = null;
+    if (aiApiUrl) {
+      try {
+        aiEndpoint = new URL(aiApiUrl).host;
+      } catch {
+        aiEndpoint = aiApiUrl;
+      }
+    }
 
     return {
       status: 'ok',
@@ -35,9 +56,11 @@ export class HealthController {
         },
         creativeGears: {
           endpointConfigured: Boolean(creativeGearsApiUrl),
+          endpoint: creativeGearsEndpoint,
         },
         ai: {
           apiConfigured: Boolean(aiApiUrl),
+          endpoint: aiEndpoint,
         },
       },
     };

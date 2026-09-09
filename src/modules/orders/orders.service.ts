@@ -18,6 +18,7 @@ import {
 import { ClientProfileService } from '../client-profiles/client-profile.service';
 import { TRANSPORT_BOOKING_FIELD_RULES } from '../required-fields/transport-booking-field-rules';
 import { routeTimeBounds } from '../../utils/field-normalize';
+import { redactFiledataForPreview } from '../../utils/xml-documents';
 import {
   QUEUE_AI_REQUEST,
   QUEUE_EMAIL_PROCESSING,
@@ -97,7 +98,7 @@ export class OrdersService {
   async previewXml(id: string) {
     try {
       const xml = await this.xmlService.generateOrderXml(id);
-      return { xml };
+      return { xml: redactFiledataForPreview(xml) };
     } catch (err: any) {
       throw new BadRequestException(
         err?.message ?? 'Failed to generate XML preview',
@@ -351,20 +352,44 @@ export class OrdersService {
       sequence: number | null;
       total: number;
       subject: string | null;
+      // All orders in the batch (sorted), so the detail view can offer prev/next
+      // navigation and a picker to jump to any sibling order (Renato 2026-09-09).
+      orders: Array<{
+        id: string;
+        sequence: number | null;
+        reference: string | null;
+      }>;
     } | null = null;
     if (order.batchImportId) {
-      const total = await this.prismaService.transportOrder.count({
+      const siblings = await this.prismaService.transportOrder.findMany({
         where: { batchImportId: order.batchImportId },
+        select: { id: true, batchSequence: true, externalReference: true },
+        orderBy: { batchSequence: 'asc' },
       });
       batch = {
         sequence: order.batchSequence,
-        total,
+        total: siblings.length,
         subject: order.emailMessage?.subject ?? null,
+        orders: siblings.map((o) => ({
+          id: o.id,
+          sequence: o.batchSequence,
+          reference: o.externalReference,
+        })),
       };
     }
 
+    // The stored delivery payloads embed the same multi-MB <filedata> base64;
+    // elide it for the detail view (the real payload stays intact in the DB).
+    const xmlDeliveries = order.xmlDeliveries.map((delivery) => ({
+      ...delivery,
+      xmlPayload: delivery.xmlPayload
+        ? redactFiledataForPreview(delivery.xmlPayload)
+        : delivery.xmlPayload,
+    }));
+
     return {
       ...order,
+      xmlDeliveries,
       aiRequests,
       aiExtraction,
       batch,

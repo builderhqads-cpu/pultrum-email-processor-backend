@@ -205,6 +205,7 @@ describe('XmlService generateOrderXml normalization', () => {
           },
         }),
       },
+      customerProfile: { findFirst: jest.fn().mockResolvedValue(null) },
       orderField: {
         upsert: jest.fn().mockResolvedValue(null),
       },
@@ -335,7 +336,8 @@ describe('XmlService generateOrderXml normalization', () => {
             },
           }),
         },
-        orderField: { upsert: jest.fn().mockResolvedValue(null) },
+        customerProfile: { findFirst: jest.fn().mockResolvedValue(null) },
+      orderField: { upsert: jest.fn().mockResolvedValue(null) },
         xmlDelivery: {
           findFirst: jest.fn().mockResolvedValue(null),
           create: jest.fn().mockResolvedValue(null),
@@ -390,6 +392,7 @@ describe('XmlService generateOrderXml normalization', () => {
           emailMessage: { subject: 'KW28', attachments: [] },
         }),
       },
+      customerProfile: { findFirst: jest.fn().mockResolvedValue(null) },
       orderField: { upsert: jest.fn().mockResolvedValue(null) },
       xmlDelivery: {
         findFirst: jest.fn().mockResolvedValue(null),
@@ -441,7 +444,8 @@ describe('XmlService generateOrderXml normalization', () => {
             emailMessage: { subject: 'KW31', attachments: [] },
           }),
         },
-        orderField: { upsert: jest.fn().mockResolvedValue(null) },
+        customerProfile: { findFirst: jest.fn().mockResolvedValue(null) },
+      orderField: { upsert: jest.fn().mockResolvedValue(null) },
         xmlDelivery: {
           findFirst: jest.fn().mockResolvedValue(null),
           create: jest.fn().mockResolvedValue(null),
@@ -456,6 +460,172 @@ describe('XmlService generateOrderXml normalization', () => {
     } finally {
       if (prev === undefined) delete process.env.CREATIVE_GEARS_EDI_PROVIDER;
       else process.env.CREATIVE_GEARS_EDI_PROVIDER = prev;
+    }
+  });
+
+  it('emits the extracted fixed_price into cargo/price (Niek)', async () => {
+    const prisma = {
+      transportOrder: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'order-fp',
+          status: 'READY_TO_XML',
+          department: 'OPEN_TRANSPORT',
+          customerEmail: 'customer@example.com',
+          missingFields: [],
+          fields: [
+            { key: 'customer_id', value: '12342' },
+            { key: 'invoice_reference', value: 'INV-12859137' },
+            { key: 'pickup_date', value: '2026-09-15' },
+            { key: 'pickup_address', value: 'Industriestrasse 1' },
+            { key: 'pickup_zipcode', value: '48712' },
+            { key: 'pickup_city', value: 'Gescher' },
+            { key: 'pickup_country', value: 'DE' },
+            { key: 'delivery_date', value: '2026-09-16' },
+            { key: 'delivery_address', value: 'Rijksstraatweg 5' },
+            { key: 'delivery_zipcode', value: '4191' },
+            { key: 'delivery_city', value: 'Geldermalsen' },
+            { key: 'delivery_country', value: 'NL' },
+            { key: 'cargo_unit_amount', value: '1' },
+            { key: 'cargo_unit_id', value: 'Bundel' },
+            // Portal "Fixed price 640" -> cargo/price.
+            { key: 'fixed_price', value: '€ 640,00' },
+          ],
+          emailMessage: { subject: 'Collection Note Report', attachments: [] },
+        }),
+      },
+      customerProfile: { findFirst: jest.fn().mockResolvedValue(null) },
+      orderField: { upsert: jest.fn().mockResolvedValue(null) },
+      xmlDelivery: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue(null),
+      },
+    } as any;
+
+    const service = new XmlService(prisma, {} as any);
+    const xml = await service.generateOrderXml('order-fp');
+
+    // Currency stripped, decimal notation normalized, zero cents dropped.
+    expect(xml).toContain('<price>640</price>');
+  });
+
+  it('omits cargo/price when no fixed_price is present', async () => {
+    const prisma = {
+      transportOrder: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'order-nofp',
+          status: 'READY_TO_XML',
+          department: 'OPEN_TRANSPORT',
+          customerEmail: 'customer@example.com',
+          missingFields: [],
+          fields: [
+            { key: 'customer_id', value: '12342' },
+            { key: 'invoice_reference', value: 'INV-12859137' },
+            { key: 'pickup_date', value: '2026-09-15' },
+            { key: 'pickup_address', value: 'Industriestrasse 1' },
+            { key: 'pickup_zipcode', value: '48712' },
+            { key: 'pickup_city', value: 'Gescher' },
+            { key: 'pickup_country', value: 'DE' },
+            { key: 'delivery_date', value: '2026-09-16' },
+            { key: 'delivery_address', value: 'Rijksstraatweg 5' },
+            { key: 'delivery_zipcode', value: '4191' },
+            { key: 'delivery_city', value: 'Geldermalsen' },
+            { key: 'delivery_country', value: 'NL' },
+            { key: 'cargo_unit_amount', value: '1' },
+            { key: 'cargo_unit_id', value: 'Bundel' },
+          ],
+          emailMessage: { subject: 'no price', attachments: [] },
+        }),
+      },
+      customerProfile: { findFirst: jest.fn().mockResolvedValue(null) },
+      orderField: { upsert: jest.fn().mockResolvedValue(null) },
+      xmlDelivery: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue(null),
+      },
+    } as any;
+
+    const service = new XmlService(prisma, {} as any);
+    const xml = await service.generateOrderXml('order-nofp');
+
+    expect(xml).not.toContain('<price>');
+  });
+
+  it('pins the documenttype per file type from the customer profile (Sander)', async () => {
+    const prev = process.env.CREATIVE_GEARS_INCLUDE_DOCUMENTS;
+    process.env.CREATIVE_GEARS_INCLUDE_DOCUMENTS = 'true';
+    try {
+      const prisma = {
+        transportOrder: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'order-dt',
+            status: 'READY_TO_XML',
+            department: 'OPEN_TRANSPORT',
+            customerEmail: 'planning@bodegraven.nl',
+            missingFields: [],
+            fields: [
+              { key: 'customer_id', value: '12342' },
+              { key: 'invoice_reference', value: 'INV-1' },
+              { key: 'pickup_date', value: '2026-09-15' },
+              { key: 'pickup_address', value: 'Industriestrasse 1' },
+              { key: 'pickup_zipcode', value: '48712' },
+              { key: 'pickup_city', value: 'Gescher' },
+              { key: 'pickup_country', value: 'DE' },
+              { key: 'delivery_date', value: '2026-09-16' },
+              { key: 'delivery_address', value: 'Rijksstraatweg 5' },
+              { key: 'delivery_zipcode', value: '4191' },
+              { key: 'delivery_city', value: 'Geldermalsen' },
+              { key: 'delivery_country', value: 'NL' },
+              { key: 'cargo_unit_amount', value: '1' },
+              { key: 'cargo_unit_id', value: 'Bundel' },
+            ],
+            emailMessage: {
+              id: 'email-dt',
+              subject: 'Bestelling',
+              attachments: [
+                {
+                  fileName: 'opdracht.xlsx',
+                  mimeType:
+                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                  contentBase64: 'eGxzeC1jb250ZW50',
+                  // AI would have said 'loading' (86) — the profile rule wins.
+                  documentPurpose: 'loading',
+                },
+                {
+                  fileName: 'bouwlocatie.jpg',
+                  mimeType: 'image/jpeg',
+                  contentBase64: 'anBnLWNvbnRlbnQ=',
+                  documentPurpose: null,
+                },
+              ],
+            },
+          }),
+        },
+        customerProfile: {
+          findFirst: jest.fn().mockResolvedValue({
+            documentTypeRules: { excel: '87', image: '92', pdf: '91' },
+          }),
+        },
+        orderField: { upsert: jest.fn().mockResolvedValue(null) },
+        xmlDelivery: {
+          findFirst: jest.fn().mockResolvedValue(null),
+          create: jest.fn().mockResolvedValue(null),
+        },
+      } as any;
+
+      const service = new XmlService(prisma, {} as any);
+      const xml = await service.generateOrderXml('order-dt');
+
+      // Excel opdracht pinned to 87 (not the AI's 86), image to 92.
+      expect(xml).toContain('<filename>opdracht.xlsx</filename>');
+      expect(xml).toContain('<documenttype_id matchmode="0">87</documenttype_id>');
+      expect(xml).toContain('<concerns>Document lossen</concerns>');
+      expect(xml).toContain('<filename>bouwlocatie.jpg</filename>');
+      // The AI's 86 must NOT appear for this order.
+      expect(xml).not.toContain('<documenttype_id matchmode="0">86</documenttype_id>');
+      expect(prisma.customerProfile.findFirst).toHaveBeenCalled();
+    } finally {
+      if (prev === undefined) delete process.env.CREATIVE_GEARS_INCLUDE_DOCUMENTS;
+      else process.env.CREATIVE_GEARS_INCLUDE_DOCUMENTS = prev;
     }
   });
 });

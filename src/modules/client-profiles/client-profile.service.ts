@@ -6,8 +6,12 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { FieldRequirement } from '@prisma/client';
+import { FieldRequirement, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  DocumentTypeRuleCategory,
+  normalizeDocumentTypeRules,
+} from '../../utils/xml-documents';
 import {
   getRuleRequirement,
   TRANSPORT_BOOKING_FIELD_RULES,
@@ -35,6 +39,11 @@ type CustomerProfileMutationInput = {
   /** Free-text guidance for the AI about this customer's documents. */
   aiInstructions: string | null;
   fields: CustomerProfileFieldInput[];
+  /**
+   * Sander: pin the Transpas documenttype per file-type category
+   * (pdf/word/excel/image) for this customer, overriding the AI. null = clear.
+   */
+  documentTypeRules: Partial<Record<DocumentTypeRuleCategory, string>> | null;
 };
 
 type CustomerProfileRecord = Awaited<
@@ -421,6 +430,9 @@ export class ClientProfileService implements OnModuleInit {
           active: input.active,
           notes: input.notes,
           aiInstructions: input.aiInstructions,
+          ...(input.documentTypeRules
+            ? { documentTypeRules: input.documentTypeRules }
+            : {}),
         },
       });
 
@@ -501,6 +513,12 @@ export class ClientProfileService implements OnModuleInit {
           ...(input.notes !== undefined ? { notes: input.notes } : {}),
           ...(input.aiInstructions !== undefined
             ? { aiInstructions: input.aiInstructions }
+            : {}),
+          ...(input.documentTypeRules !== undefined
+            ? {
+                documentTypeRules:
+                  input.documentTypeRules ?? Prisma.DbNull,
+              }
             : {}),
         },
       });
@@ -608,6 +626,7 @@ export class ClientProfileService implements OnModuleInit {
       active: profile.active,
       notes: profile.notes,
       aiInstructions: profile.aiInstructions ?? '',
+      documentTypeRules: normalizeDocumentTypeRules(profile.documentTypeRules),
       createdAt: profile.createdAt,
       updatedAt: profile.updatedAt,
       fields: profile.fields.map((field) => ({
@@ -638,6 +657,7 @@ export class ClientProfileService implements OnModuleInit {
     notes?: unknown;
     aiInstructions?: unknown;
     fields?: unknown;
+    documentTypeRules?: unknown;
   }): CustomerProfileMutationInput {
     if (typeof input.name !== 'string' || !input.name.trim()) {
       throw new BadRequestException('Customer profile name is required.');
@@ -696,6 +716,10 @@ export class ClientProfileService implements OnModuleInit {
       unique.set(key, { key, value });
     }
 
+    const documentTypeRules = normalizeDocumentTypeRules(
+      input.documentTypeRules,
+    );
+
     return {
       name: input.name.trim(),
       contactEmail,
@@ -704,6 +728,9 @@ export class ClientProfileService implements OnModuleInit {
       notes,
       aiInstructions,
       fields: [...unique.values()],
+      documentTypeRules: Object.keys(documentTypeRules).length
+        ? documentTypeRules
+        : null,
     };
   }
 
@@ -715,6 +742,7 @@ export class ClientProfileService implements OnModuleInit {
     notes?: unknown;
     aiInstructions?: unknown;
     fields?: unknown;
+    documentTypeRules?: unknown;
   }) {
     const out: Partial<CustomerProfileMutationInput> = {};
 
@@ -796,6 +824,11 @@ export class ClientProfileService implements OnModuleInit {
       }
 
       out.fields = [...unique.values()];
+    }
+
+    if (input.documentTypeRules !== undefined) {
+      const rules = normalizeDocumentTypeRules(input.documentTypeRules);
+      out.documentTypeRules = Object.keys(rules).length ? rules : null;
     }
 
     if (Object.keys(out).length === 0) {

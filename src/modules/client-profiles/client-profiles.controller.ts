@@ -18,6 +18,8 @@ type CustomerProfilePayload = {
   active?: unknown;
   notes?: unknown;
   fields?: unknown;
+  aiInstructions?: unknown;
+  documentTypeRules?: unknown;
 };
 
 @Controller('customer-profiles')

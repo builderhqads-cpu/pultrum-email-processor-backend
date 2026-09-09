@@ -8,9 +8,11 @@ import {
 } from '@prisma/client';
 import { OrderFieldSource } from '@prisma/client';
 import {
+  concernsForDocumentType,
+  DocumentTypeRuleCategory,
   isXmlDocumentAttachment,
-  xmlAttachmentConcerns,
-  xmlAttachmentDocumentType,
+  normalizeDocumentTypeRules,
+  resolveAttachmentDocumentType,
   xmlDocumentsEnabled,
 } from '../../utils/xml-documents';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -151,6 +153,7 @@ export class XmlService {
     fileName?: string | null;
     mimeType?: string | null;
     contentBase64?: string | null;
+    size?: number | null;
   }) {
     // Shared with the emails API (`includedInXml` flag) so they never drift.
     return isXmlDocumentAttachment(input);
@@ -193,6 +196,9 @@ export class XmlService {
             fileName: string;
             mimeType: string;
             contentBase64?: string | null;
+            // Size drives the signature-vs-photo call in isXmlDocumentAttachment
+            // (a small image00N is a signature logo; a large one is a real photo).
+            size?: number | null;
             // Niek #6: 'loading' | 'unloading' | 'both', set by the AI once it
             // classifies the document against the order's pickup/delivery
             // address. Absent today -> the attachment goes out as 92.
@@ -202,6 +208,7 @@ export class XmlService {
       | null
       | undefined,
     reference?: string,
+    documentTypeRules?: Partial<Record<DocumentTypeRuleCategory, string>> | null,
   ) {
     if (!emailMessage) return;
     // TPE Standard structure (ArtSystems wiki): each <document> carries
@@ -230,16 +237,22 @@ export class XmlService {
     for (const attachment of emailMessage.attachments ?? []) {
       if (!this.isSupportedOriginalAttachment(attachment)) continue;
 
+      // A per-profile file-type rule (Sander) wins; otherwise fall back to the
+      // AI-derived purpose (86/87/91) or the 92 default (Niek #6).
+      const documentType = resolveAttachmentDocumentType({
+        fileName: attachment.fileName,
+        mimeType: attachment.mimeType,
+        documentPurpose: attachment.documentPurpose,
+        rules: documentTypeRules,
+      });
       documentEntries.push({
-        // 92 = Factuurbijlage (default). Niek #6: when the AI classifies the
-        // document (loading/unloading/both), it maps to 86/87/91 instead.
-        documentType: xmlAttachmentDocumentType(attachment.documentPurpose),
+        documentType,
         fileName: this.normalizeDocumentFileName(
           attachment.fileName,
           `attachment-${documentEntries.length + 1}`,
         ),
         fileData: (attachment.contentBase64 || '').trim(),
-        concerns: xmlAttachmentConcerns(attachment.documentPurpose),
+        concerns: concernsForDocumentType(documentType),
       });
     }
 
@@ -259,6 +272,26 @@ export class XmlService {
       documentNode.up();
     }
     documents.up();
+  }
+
+  /**
+   * Per-profile documenttype rules (Sander) for the order's customer, matched by
+   * email against the profile's primary/additional addresses. {} when there is
+   * no profile or no rules — so the XML builder falls back to the AI mapping.
+   */
+  private async resolveDocumentTypeRules(
+    customerEmail?: string | null,
+  ): Promise<Partial<Record<DocumentTypeRuleCategory, string>>> {
+    const email = (customerEmail || '').trim().toLowerCase();
+    if (!email) return {};
+    const profile = await this.prismaService.customerProfile.findFirst({
+      where: {
+        active: true,
+        OR: [{ contactEmail: email }, { emails: { some: { email } } }],
+      },
+      select: { documentTypeRules: true },
+    });
+    return normalizeDocumentTypeRules(profile?.documentTypeRules);
   }
 
   private async upsertOrderField(params: {
@@ -366,6 +399,7 @@ export class XmlService {
                 mimeType: true,
                 contentBase64: true,
                 documentPurpose: true,
+                size: true,
               },
             },
           },
@@ -840,6 +874,17 @@ export class XmlService {
     cargo.ele('length').txt(blankIfZero(length)).up();
     cargo.ele('width').txt(blankIfZero(width)).up();
     cargo.ele('height').txt(blankIfZero(height)).up();
+    // Fixed price (Niek): the agreed transport price the AI extracts (portal
+    // "Fixed price") maps to cargo/price. Stored under either fixed_price or the
+    // legacy price key — emit whichever is present, only when non-empty.
+    // blankIfZero strips currency (€) and normalizes notation ("640,00" -> 640).
+    const cargoPrice = blankIfZero(
+      this.getFieldValue(fieldMap, 'fixed_price') ||
+        this.getFieldValue(fieldMap, 'price'),
+    );
+    if (cargoPrice) {
+      cargo.ele('price').txt(cargoPrice).up();
+    }
 
     const goodslines = cargo.ele('goodslines').ele('goodsline');
     goodslines.ele('unitamount').txt(normalizeQuantity(goodsUnitAmount)).up();
@@ -860,10 +905,14 @@ export class XmlService {
     goodslines.up().up().up(); // goodsline -> goodslines -> cargo
 
     if (this.shouldIncludeOriginalDocuments()) {
+      const documentTypeRules = await this.resolveDocumentTypeRules(
+        order.customerEmail,
+      );
       this.appendOriginalDocuments(
         doc,
         order.emailMessage,
         shipmentReference || bookingReference,
+        documentTypeRules,
       );
     }
 

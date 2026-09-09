@@ -308,6 +308,11 @@ model CustomerProfile {
   /// (where each value lives, layout conventions, per-field rules). Forwarded to
   /// the extraction route; never used as a field value.
   aiInstructions String?
+  /// Sander/Niek (2026-09-09): pin the Transpas documenttype per FILE TYPE for
+  /// this customer, overriding the AI's per-document judgement. Shape:
+  /// { "pdf": "91", "word": "92", "excel": "87", "image": "92" } — only the
+  /// set categories are present. Read by the XML builder when embedding docs.
+  documentTypeRules Json?
   createdAt    DateTime              @default(now())
   updatedAt    DateTime              @updatedAt
 
@@ -387,6 +392,23 @@ model AiRequest {
   replyDraft CustomerReplyDraft? @relation("AiRequestReplyDraft")
 
   @@index([orderId])
+  @@index([status])
+}
+
+/// Call-level log of the AI router (/eml-process). Unlike AiRequest (which is
+/// per-ORDER and only exists once an order is created), this records EVERY call
+/// — including failures that happen before any order exists (router down, 402,
+/// timeout). The AI Status page derives status/uptime/incidents from this, so a
+/// total router outage is visible there. Not tied to an order.
+model AiCallLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  kind      String   @default("eml-process")
+  status    String // SUCCEEDED | FAILED
+  error     String?
+  reference String? // e.g. the e-mail subject, for context
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
   @@index([status])
 }
 

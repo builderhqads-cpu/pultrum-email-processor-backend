@@ -15,7 +15,7 @@ describe('AiExtractionService', () => {
 
     const service = new AiExtractionService(
       configService,
-      {} as any,
+      { aiCallLog: { create: jest.fn() } } as any,
       { log: jest.fn() } as any,
       { resolveZipcodeHints: jest.fn(async () => []) } as any,
     );
@@ -62,7 +62,7 @@ describe('AiExtractionService', () => {
 
     const service = new AiExtractionService(
       configService,
-      {} as any,
+      { aiCallLog: { create: jest.fn() } } as any,
       { log: jest.fn() } as any,
       { resolveZipcodeHints: jest.fn(async () => []) } as any,
     );
@@ -113,7 +113,7 @@ describe('AiExtractionService', () => {
 
     const service = new AiExtractionService(
       configService,
-      {} as any,
+      { aiCallLog: { create: jest.fn() } } as any,
       { log: jest.fn() } as any,
       { resolveZipcodeHints: jest.fn(async () => []) } as any,
     );
@@ -158,7 +158,7 @@ describe('AiExtractionService', () => {
 
     const service = new AiExtractionService(
       configService,
-      {} as any,
+      { aiCallLog: { create: jest.fn() } } as any,
       { log: jest.fn() } as any,
       { resolveZipcodeHints: jest.fn(async () => []) } as any,
     );
@@ -208,7 +208,7 @@ describe('AiExtractionService', () => {
 
     const service = new AiExtractionService(
       configService,
-      {} as any,
+      { aiCallLog: { create: jest.fn() } } as any,
       { log: jest.fn() } as any,
       { resolveZipcodeHints: jest.fn(async () => []) } as any,
     );
@@ -277,7 +277,7 @@ describe('AiExtractionService', () => {
 
     const service = new AiExtractionService(
       configService,
-      {} as any,
+      { aiCallLog: { create: jest.fn() } } as any,
       { log: jest.fn() } as any,
       { resolveZipcodeHints: jest.fn(async () => []) } as any,
     );
@@ -336,7 +336,7 @@ describe('AiExtractionService', () => {
 
     const service = new AiExtractionService(
       configService,
-      {} as any,
+      { aiCallLog: { create: jest.fn() } } as any,
       { log: jest.fn() } as any,
       { resolveZipcodeHints: jest.fn(async () => []) } as any,
     );
@@ -391,7 +391,7 @@ describe('AiExtractionService', () => {
 
     const service = new AiExtractionService(
       configService,
-      {} as any,
+      { aiCallLog: { create: jest.fn() } } as any,
       { log: jest.fn() } as any,
       { resolveZipcodeHints: jest.fn(async () => []) } as any,
     );
@@ -458,6 +458,7 @@ describe('AiExtractionService', () => {
 
     const prismaService: any = {
       aiRequest: { create: jest.fn(async () => ({})) },
+      aiCallLog: { create: jest.fn(async () => ({})) },
       transportOrder: {
         findUnique: jest.fn(async () => ({
           id: 'order-1',
@@ -532,7 +533,7 @@ describe('AiExtractionService', () => {
   it('folds label-derived AI keys onto their canonical field key', () => {
     const service = new AiExtractionService(
       { get: jest.fn() } as any,
-      {} as any,
+      { aiCallLog: { create: jest.fn() } } as any,
       { log: jest.fn() } as any,
       { resolveZipcodeHints: jest.fn(async () => []) } as any,
     );
@@ -562,7 +563,7 @@ describe('AiExtractionService', () => {
   it('parses unmappedFields, keeping original labels (Niek #12)', () => {
     const service = new AiExtractionService(
       { get: jest.fn() } as any,
-      {} as any,
+      { aiCallLog: { create: jest.fn() } } as any,
       { log: jest.fn() } as any,
       { resolveZipcodeHints: jest.fn(async () => []) } as any,
     );

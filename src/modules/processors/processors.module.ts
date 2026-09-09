@@ -22,10 +22,12 @@ import { AiReplyModule } from '../ai-reply/ai-reply.module';
 import { FieldMergeService } from '../field-merge/field-merge.service';
 import { GeocodingModule } from '../geocoding/geocoding.module';
 import { DoclingModule } from '../docling/docling.module';
+import { AlertsModule } from '../alerts/alerts.module';
 
 @Module({
   imports: [
     QueuesModule,
+    AlertsModule,
     RequiredFieldsModule,
     AuditLogModule,
     AiClientModule,

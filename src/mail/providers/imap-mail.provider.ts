@@ -7,6 +7,7 @@ import {
   NormalizedEmail,
 } from './mail-provider.interface';
 import { fetchAccessTokenFromRefreshToken } from '../oauth2/oauth2-refresh-token';
+import { isSignatureSizedImage } from '../../utils/xml-documents';
 
 export class ImapMailProvider implements MailProvider {
   constructor(private readonly configService: ConfigService) {}
@@ -294,12 +295,18 @@ export class ImapMailProvider implements MailProvider {
             .toString()
             .toLowerCase();
           // A body-embedded image is referenced via content-id (cid:) and/or
-          // marked related/inline. A real attached image has none of these.
-          return (
+          // marked related/inline. But a REAL photo can also be embedded in the
+          // body (Sander: a site/access map) — only drop it when it is
+          // signature-sized (small); keep large body images as attachments.
+          const inline =
             a?.related === true ||
             disposition === 'inline' ||
-            Boolean(a?.cid || a?.contentId)
-          );
+            Boolean(a?.cid || a?.contentId);
+          const size =
+            typeof a?.size === 'number'
+              ? a.size
+              : Number(a?.size ?? 0) || undefined;
+          return inline && isSignatureSizedImage(size);
         };
 
         const attachments: NormalizedAttachment[] = (parsed.attachments || [])

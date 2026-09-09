@@ -4,6 +4,7 @@ import { OrderStatus, XmlDeliveryStatus } from '@prisma/client';
 import 'isomorphic-fetch';
 import { PrismaService } from '../../prisma/prisma.service';
 import { XmlService } from '../xml/xml.service';
+import { AlertsService } from '../alerts/alerts.service';
 
 @Injectable()
 export class CreativeGearsService {
@@ -13,6 +14,7 @@ export class CreativeGearsService {
     private readonly prismaService: PrismaService,
     private readonly xmlService: XmlService,
     private readonly configService: ConfigService,
+    private readonly alertsService: AlertsService,
   ) {}
 
   private get apiUrl() {
@@ -46,33 +48,26 @@ export class CreativeGearsService {
   }
 
   private async getOrCreatePendingXmlDelivery(orderId: string) {
-    const existingPending = await this.prismaService.xmlDelivery.findFirst({
+    // ALWAYS regenerate from current data before sending. The PENDING payload is
+    // only a preview cache — it goes stale when the order or its customer profile
+    // changes (e.g. per-file documenttypes, Renato 2026-09-09), and reusing it
+    // would deliver outdated XML to Creative Gears. generateOrderXml updates the
+    // existing PENDING row in place (or creates one), so we send exactly what a
+    // fresh preview shows.
+    await this.xmlService.generateOrderXml(orderId);
+
+    const pending = await this.prismaService.xmlDelivery.findFirst({
       where: { orderId, status: XmlDeliveryStatus.PENDING },
       orderBy: { createdAt: 'desc' },
     });
-    if (existingPending?.xmlPayload) return existingPending;
 
-    const xmlPayload = await this.xmlService.generateOrderXml(orderId);
-
-    const createdPending = await this.prismaService.xmlDelivery.findFirst({
-      where: { orderId, status: XmlDeliveryStatus.PENDING },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    if (!createdPending) {
+    if (!pending?.xmlPayload) {
       throw new Error(
         `XmlDelivery PENDING not found after generation: orderId=${orderId}`,
       );
     }
 
-    if (!createdPending.xmlPayload) {
-      return await this.prismaService.xmlDelivery.update({
-        where: { id: createdPending.id },
-        data: { xmlPayload },
-      });
-    }
-
-    return createdPending;
+    return pending;
   }
 
   async sendXmlDelivery(orderId: string) {
@@ -182,6 +177,12 @@ export class CreativeGearsService {
         this.logger.warn(
           `Creative Gears rejected XML: orderId=${orderId} deliveryId=${delivery.id} status=${res.status} ${res.statusText} response=${this.responsePreview(responseText)}`,
         );
+        void this.alertsService.notifyIncident({
+          type: 'xml',
+          title: 'XML rejeitado pela Creative Gears',
+          reference: orderId,
+          error: `HTTP ${res.status} ${res.statusText} — ${this.responsePreview(responseText)}`,
+        });
       }
 
       return {
@@ -215,6 +216,12 @@ export class CreativeGearsService {
       this.logger.error(
         `Creative Gears XML delivery failed: orderId=${orderId} deliveryId=${delivery.id} error=${message} response=${this.responsePreview(responseText)}`,
       );
+      void this.alertsService.notifyIncident({
+        type: 'xml',
+        title: 'Falha no envio do XML',
+        reference: orderId,
+        error: message,
+      });
       throw err;
     } finally {
       clearTimeout(timeout);

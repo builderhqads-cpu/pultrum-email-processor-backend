@@ -21,6 +21,8 @@ import { AuditLogModule } from './modules/audit-log/audit-log.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { ClientProfileModule } from './modules/client-profiles/client-profile.module';
+import { AiStatusModule } from './modules/ai-status/ai-status.module';
+import { CgStatusModule } from './modules/cg-status/cg-status.module';
 import { ScheduleModule } from '@nestjs/schedule';
 
 @Module({
@@ -49,6 +51,8 @@ import { ScheduleModule } from '@nestjs/schedule';
     UsersModule,
     AuthModule,
     ClientProfileModule,
+    AiStatusModule,
+    CgStatusModule,
   ],
   controllers: [AppController],
   providers: [AppService],

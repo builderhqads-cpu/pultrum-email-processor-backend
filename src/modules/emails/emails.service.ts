@@ -31,6 +31,7 @@ export class EmailsService {
         receivedAt: true,
         status: true,
         isTransportOrder: true,
+        hasAttachments: true,
         classificationReason: true,
         classifiedAt: true,
         mailbox: {
@@ -55,6 +56,7 @@ export class EmailsService {
       receivedAt: e.receivedAt,
       status: e.status,
       isTransportOrder: e.isTransportOrder,
+      hasAttachments: e.hasAttachments,
       classificationReason: e.classificationReason,
       classifiedAt: e.classifiedAt,
       mailbox: e.mailbox,

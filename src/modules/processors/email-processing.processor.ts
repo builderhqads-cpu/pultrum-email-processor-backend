@@ -38,7 +38,7 @@ import {
   routeTimeBounds,
   widthMmToCm,
 } from '../../utils/field-normalize';
-import { isXmlDocumentAttachment } from '../../utils/xml-documents';
+import { isImageAttachment } from '../../utils/xml-documents';
 import {
   isExcludedParty,
   parseExcludedPartyNames,
@@ -46,6 +46,7 @@ import {
 import { applyDeelladingDivision } from '../../utils/deellading';
 import { classifyEmailForProcessing } from '../../utils/email-filter';
 import { DoclingService } from '../docling/docling.service';
+import { AlertsService } from '../alerts/alerts.service';
 import {
   FieldMergeService,
   type MergeableField,
@@ -79,6 +80,7 @@ export class EmailProcessingProcessor extends WorkerHost {
     private readonly addressEnrichmentService: AddressEnrichmentService,
     private readonly configService: ConfigService,
     private readonly doclingService: DoclingService,
+    private readonly alertsService: AlertsService,
   ) {
     super();
   }
@@ -508,19 +510,20 @@ export class EmailProcessingProcessor extends WorkerHost {
       fieldValues: profileFields,
     });
     // Attachments for the AI. Format B (AI_SEND_ATTACHMENT_FILES on): send the
-    // real document attachments as base64 so the router READS the file directly
-    // (multimodal) — docling's flattened text loses 2-column layouts (Niek #5).
-    // Non-documents (signature logos, ...) are excluded via isXmlDocumentAttachment,
-    // which also stops them reaching the router at all (Niek #4). Legacy path
+    // attachments as base64 so the router READS the file directly (multimodal) —
+    // docling's flattened text loses 2-column layouts (Niek #5). Legacy path
     // (flag off): the docling-extracted text we already have.
     const attachmentsPayload = this.sendAttachmentFiles()
       ? (email.attachments ?? [])
-          .filter((a) =>
-            isXmlDocumentAttachment({
-              fileName: a.fileName,
-              mimeType: a.mimeType,
-              contentBase64: a.contentBase64,
-            }),
+          .filter(
+            (a) =>
+              // Sander: send EVERY attachment with content to the AI EXCEPT
+              // images (access-route photos are for the driver, not data). So
+              // the opdracht — PDF, CSV, XLSX, DOCX, ... — always reaches the AI;
+              // if several attachments are present, all non-images go, not just
+              // the PDF. Images still go into the XML via appendOriginalDocuments.
+              ((a.contentBase64 ?? '') as string).trim() &&
+              !isImageAttachment(a.fileName, a.mimeType),
           )
           .map((a) => ({
             filename: a.fileName ?? 'attachment',
@@ -1930,6 +1933,11 @@ export class EmailProcessingProcessor extends WorkerHost {
       const fieldsCount = params.aiResult?.fields
         ? Object.keys(params.aiResult.fields).length
         : 0;
+      const status = params.aiResult
+        ? fieldsCount > 0
+          ? 'SUCCEEDED'
+          : 'EMPTY'
+        : 'FAILED';
       await this.prismaService.aiRequest.create({
         data: {
           orderId: params.orderId,
@@ -1937,13 +1945,19 @@ export class EmailProcessingProcessor extends WorkerHost {
           responseJson: (params.aiResult?.rawResponse ??
             params.aiResult ??
             null) as any,
-          status: params.aiResult
-            ? fieldsCount > 0
-              ? 'SUCCEEDED'
-              : 'EMPTY'
-            : 'FAILED',
+          status,
         },
       });
+
+      if (status === 'FAILED') {
+        void this.alertsService?.notifyIncident({
+          type: 'ai',
+          title: 'Falha na extração da IA',
+          reference: params.orderId,
+          error:
+            'A chamada de IA não retornou dados (router indisponível / erro de processamento).',
+        });
+      }
     } catch (err: any) {
       this.logger.warn(
         `Failed to record AI extraction request for orderId=${params.orderId}: ${err?.message ?? err}`,
@@ -2553,6 +2567,14 @@ export class EmailProcessingProcessor extends WorkerHost {
         `Failed processing emailMessageId=${emailForValidation.id}: ${err?.message ?? err}`,
         err?.stack,
       );
+
+      void this.alertsService?.notifyIncident({
+        type: 'email',
+        title: 'Falha ao processar e-mail',
+        reference: emailForValidation.subject ?? emailForValidation.id,
+        error: err?.message ?? String(err),
+        context: { 'E-mail ID': emailForValidation.id },
+      });
 
       throw err;
     }

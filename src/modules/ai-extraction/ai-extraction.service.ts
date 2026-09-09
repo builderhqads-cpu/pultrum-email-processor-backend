@@ -957,6 +957,11 @@ export class AiExtractionService {
         this.logger.warn(
           `AI analysis API error: status=${res.status} url=${url} body=${(text || '').slice(0, 1000)}`,
         );
+        void this.recordAiCall(
+          'FAILED',
+          `HTTP ${res.status} ${res.statusText} — ${(text || '').slice(0, 500)}`,
+          options?.emailSubject,
+        );
         return null;
       }
       let raw: any = null;
@@ -965,6 +970,11 @@ export class AiExtractionService {
       } catch {
         this.logger.warn(
           `AI analysis returned non-JSON: ${(text || '').slice(0, 500)}`,
+        );
+        void this.recordAiCall(
+          'FAILED',
+          'Resposta não-JSON do router',
+          options?.emailSubject,
         );
         return null;
       }
@@ -987,6 +997,13 @@ export class AiExtractionService {
                 emlBase64: `${String(eml).slice(0, 120)}…(${String(eml).length} bytes)`,
               }),
         };
+        void this.recordAiCall('SUCCEEDED', null, options?.emailSubject);
+      } else {
+        void this.recordAiCall(
+          'FAILED',
+          'Router respondeu sem uma análise válida',
+          options?.emailSubject,
+        );
       }
       return analysis;
     } catch (err: any) {
@@ -1001,7 +1018,38 @@ export class AiExtractionService {
       } else {
         this.logger.warn(`AI analysis request failed: ${err?.message ?? err}`);
       }
+      void this.recordAiCall(
+        'FAILED',
+        timedOut
+          ? `Timeout após ${timeoutMs}ms (router lento/indisponível)`
+          : (err?.message ?? String(err)),
+        options?.emailSubject,
+      );
       return null;
+    }
+  }
+
+  /**
+   * Records one /eml-process call outcome (SUCCEEDED/FAILED) for the AI Status
+   * page. Call-level, order-independent — captures router-down/402/timeout that
+   * happen before any order exists. Best-effort: never breaks extraction.
+   */
+  private async recordAiCall(
+    status: 'SUCCEEDED' | 'FAILED',
+    error?: string | null,
+    reference?: string | null,
+  ): Promise<void> {
+    try {
+      await this.prismaService.aiCallLog.create({
+        data: {
+          kind: 'eml-process',
+          status,
+          error: error ? error.toString().slice(0, 2000) : null,
+          reference: reference ? reference.toString().slice(0, 300) : null,
+        },
+      });
+    } catch (err: any) {
+      this.logger.warn(`Failed to record AiCallLog: ${err?.message ?? err}`);
     }
   }
 

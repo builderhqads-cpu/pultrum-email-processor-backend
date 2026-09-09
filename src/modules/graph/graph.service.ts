@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { GraphAuthService } from './graph-auth.service';
 import { ResponseType } from '@microsoft/microsoft-graph-client';
 import { NormalizedAttachment } from '../../mail/providers/mail-provider.interface';
+import { isSignatureSizedImage } from '../../utils/xml-documents';
 
 @Injectable()
 export class GraphService {
@@ -72,16 +73,19 @@ export class GraphService {
 
       const isImage = (contentType || '').toLowerCase().startsWith('image/');
 
-      // Fast path: an image explicitly marked inline is a body image (signature
-      // logo, social icon) — skip without downloading anything.
-      if (isImage && att?.isInline === true) {
-        continue;
-      }
-
       const size =
         typeof att?.size === 'number'
           ? att.size
           : Number(att?.size ?? 0) || undefined;
+
+      // Fast path: a SMALL image marked inline is a signature logo / social icon
+      // — skip without downloading. A LARGE inline image is a real photo (Sander:
+      // a site/access map embedded in the body) and must be kept, so it falls
+      // through to the download + store below.
+      if (isImage && att?.isInline === true && isSignatureSizedImage(size)) {
+        continue;
+      }
+
       let contentBase64: string | undefined;
       let contentId: string | undefined;
 
@@ -128,10 +132,11 @@ export class GraphService {
       }
 
       // Graph's isInline is unreliable for server-stamped signatures (Exclaimer
-      // arrives with isInline=false). A body-embedded image ALWAYS carries a
-      // Content-ID (referenced via cid: in the HTML); a real attached image
-      // (photo/scan) does not. Drop the former, keep the latter.
-      if (isImage && contentId) {
+      // arrives with isInline=false). A body-embedded image carries a Content-ID
+      // (referenced via cid: in the HTML). Drop it ONLY when it is signature-sized
+      // (small); a large cid image is a real photo embedded in the body (Sander:
+      // site/access map) and is kept as a document.
+      if (isImage && contentId && isSignatureSizedImage(size)) {
         continue;
       }
 
