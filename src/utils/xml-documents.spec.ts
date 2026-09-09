@@ -85,6 +85,12 @@ describe('xmlAttachmentDocumentType (Niek #6)', () => {
     expect(xmlAttachmentDocumentType('something-else')).toBe('92');
   });
 
+  it('maps an explicit invoice/Factuurbijlage classification to 92', () => {
+    expect(xmlAttachmentDocumentType('invoice')).toBe('92');
+    expect(xmlAttachmentDocumentType('factuurbijlage')).toBe('92');
+    expect(xmlAttachmentDocumentType('  Invoice ')).toBe('92');
+  });
+
   it('concerns label matches the mapped type', () => {
     expect(xmlAttachmentConcerns('loading')).toBe('Document laden');
     expect(xmlAttachmentConcerns('unloading')).toBe('Document lossen');
@@ -109,11 +115,16 @@ describe('normalizeDocumentPurpose (Niek #6)', () => {
     expect(normalizeDocumentPurpose('Loading')).toBe('loading');
   });
 
+  it('recognizes an explicit invoice/Factuurbijlage classification', () => {
+    expect(normalizeDocumentPurpose('invoice')).toBe('invoice');
+    expect(normalizeDocumentPurpose('factuurbijlage')).toBe('invoice');
+  });
+
   it('returns null for absent/unknown values (so the doc stays 92)', () => {
     expect(normalizeDocumentPurpose(null)).toBeNull();
     expect(normalizeDocumentPurpose(undefined)).toBeNull();
     expect(normalizeDocumentPurpose('')).toBeNull();
-    expect(normalizeDocumentPurpose('invoice')).toBeNull();
+    expect(normalizeDocumentPurpose('random-label')).toBeNull();
   });
 
   it('round-trips through the XML type mapping', () => {

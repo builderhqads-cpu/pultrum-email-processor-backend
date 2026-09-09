@@ -76,6 +76,11 @@ export function xmlAttachmentDocumentType(purpose?: string | null): string {
     case 'beide':
     case 'laden/lossen':
       return '91';
+    // Explicit invoice classification maps to 92, same as the unclassified
+    // default — but recognised on purpose so the AI can say "this is an invoice".
+    case 'invoice':
+    case 'factuurbijlage':
+      return '92';
     default:
       return '92';
   }
@@ -89,7 +94,7 @@ export function xmlAttachmentDocumentType(purpose?: string | null): string {
  */
 export function normalizeDocumentPurpose(
   value?: string | null,
-): 'loading' | 'unloading' | 'both' | null {
+): 'loading' | 'unloading' | 'both' | 'invoice' | null {
   switch ((value ?? '').trim().toLowerCase()) {
     case 'loading':
     case 'laden':
@@ -101,6 +106,11 @@ export function normalizeDocumentPurpose(
     case 'beide':
     case 'laden/lossen':
       return 'both';
+    // Persist an explicit invoice classification (still emits 92) so it is
+    // distinguishable from "not classified" (null) in the panel/audit.
+    case 'invoice':
+    case 'factuurbijlage':
+      return 'invoice';
     default:
       return null;
   }

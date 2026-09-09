@@ -38,6 +38,7 @@ import {
   routeTimeBounds,
   widthMmToCm,
 } from '../../utils/field-normalize';
+import { isXmlDocumentAttachment } from '../../utils/xml-documents';
 import {
   isExcludedParty,
   parseExcludedPartyNames,
@@ -417,6 +418,19 @@ export class EmailProcessingProcessor extends WorkerHost {
     return ['1', 'true', 'yes', 'y', 'on'].includes(raw.toLowerCase());
   }
 
+  /**
+   * Format B: send each document attachment to the router as base64 so the AI
+   * reads the file itself (multimodal), instead of docling-extracted text —
+   * docling flattens 2-column layouts and swapped load/unload (Niek #5). Off by
+   * default; turn on only once the router accepts + reads attachment files.
+   */
+  private sendAttachmentFiles(): boolean {
+    const raw = (
+      this.configService.get<string>('AI_SEND_ATTACHMENT_FILES') ?? ''
+    ).trim();
+    return ['1', 'true', 'yes', 'y', 'on'].includes(raw.toLowerCase());
+  }
+
   /** Deterministic inbound pre-filter (cost). Opt-in; off by default. */
   private emailFilterEnabled(): boolean {
     const raw = (
@@ -461,7 +475,12 @@ export class EmailProcessingProcessor extends WorkerHost {
     subject: string;
     bodyText?: string | null;
     bodyHtml?: string | null;
-    attachments?: Array<{ fileName?: string | null; extractedText?: string | null }>;
+    attachments?: Array<{
+      fileName?: string | null;
+      mimeType?: string | null;
+      contentBase64?: string | null;
+      extractedText?: string | null;
+    }>;
     receivedAt?: Date | null;
     mailbox: { department: Department };
   }): Promise<void> {
@@ -488,15 +507,33 @@ export class EmailProcessingProcessor extends WorkerHost {
       emailSubject: email.subject,
       fieldValues: profileFields,
     });
-    // Docling: forward the text we already extracted from each attachment, so the
-    // router can use it instead of parsing the PDFs from the .eml. Empty when
-    // docling is off (extractedText stays null) -> the option is simply omitted.
-    const extractedAttachments = (email.attachments ?? [])
-      .filter((a) => ((a.extractedText ?? '') as string).trim())
-      .map((a) => ({
-        filename: a.fileName ?? 'attachment',
-        text: ((a.extractedText ?? '') as string).trim(),
-      }));
+    // Attachments for the AI. Format B (AI_SEND_ATTACHMENT_FILES on): send the
+    // real document attachments as base64 so the router READS the file directly
+    // (multimodal) — docling's flattened text loses 2-column layouts (Niek #5).
+    // Non-documents (signature logos, ...) are excluded via isXmlDocumentAttachment,
+    // which also stops them reaching the router at all (Niek #4). Legacy path
+    // (flag off): the docling-extracted text we already have.
+    const attachmentsPayload = this.sendAttachmentFiles()
+      ? (email.attachments ?? [])
+          .filter((a) =>
+            isXmlDocumentAttachment({
+              fileName: a.fileName,
+              mimeType: a.mimeType,
+              contentBase64: a.contentBase64,
+            }),
+          )
+          .map((a) => ({
+            filename: a.fileName ?? 'attachment',
+            contentType: a.mimeType ?? null,
+            contentBase64: ((a.contentBase64 ?? '') as string).trim(),
+          }))
+          .filter((a) => a.contentBase64)
+      : (email.attachments ?? [])
+          .filter((a) => ((a.extractedText ?? '') as string).trim())
+          .map((a) => ({
+            filename: a.fileName ?? 'attachment',
+            text: ((a.extractedText ?? '') as string).trim(),
+          }));
 
     const analysis = await this.aiExtractionService.analyzeEmail(eml, {
       detectedFields: [
@@ -504,7 +541,7 @@ export class EmailProcessingProcessor extends WorkerHost {
         ...preDetectedZipcodes,
       ],
       customerProfile: this.toCustomerProfileContext(clientProfile),
-      attachments: extractedAttachments,
+      attachments: attachmentsPayload,
       // Used only when the .eml is omitted: keeps subject + body in the payload.
       emailSubject: email.subject,
       emailBody: email.bodyText ?? null,
@@ -1360,7 +1397,7 @@ export class EmailProcessingProcessor extends WorkerHost {
     emailMessageId: string,
     classifications?: Array<{
       filename: string;
-      documentPurpose: 'loading' | 'unloading' | 'both' | null;
+      documentPurpose: 'loading' | 'unloading' | 'both' | 'invoice' | null;
     }> | null,
   ) {
     const list = (classifications ?? []).filter((c) => c && c.filename);
@@ -1967,7 +2004,11 @@ export class EmailProcessingProcessor extends WorkerHost {
     });
     const emailForProcessing = refreshed ?? emailMessage;
 
-    await this.extractAttachmentTextIfNeeded(emailForProcessing);
+    // Format B sends the attachment FILE to the router (it reads it directly),
+    // so we skip our own text extraction (docling/parser) entirely.
+    if (!this.sendAttachmentFiles()) {
+      await this.extractAttachmentTextIfNeeded(emailForProcessing);
+    }
 
     // Refresh again to ensure extractedText is loaded.
     const withExtracted = await this.prismaService.emailMessage.findUnique({

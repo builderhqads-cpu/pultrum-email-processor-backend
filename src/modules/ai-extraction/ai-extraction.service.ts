@@ -93,7 +93,7 @@ export type AiOrderResult = {
  */
 export type AiAttachmentClassification = {
   filename: string;
-  documentPurpose: 'loading' | 'unloading' | 'both' | null;
+  documentPurpose: 'loading' | 'unloading' | 'both' | 'invoice' | null;
   purposeReason?: string | null;
 };
 
@@ -840,12 +840,17 @@ export class AiExtractionService {
     options?: {
       detectedFields?: AiPreDetectedField[];
       customerProfile?: AiCustomerProfileContext | null;
-      // Pre-extracted attachment text (docling). When present, sent alongside the
-      // .eml so the router can use it instead of parsing the PDFs itself.
+      // Attachments forwarded to the router. Two shapes:
+      //  - legacy: pre-extracted text (docling) -> { filename, text }
+      //  - Format B: the file itself -> { filename, contentType, contentBase64 }
+      // so the router reads the document directly (multimodal), instead of our
+      // flattened text. The router picks whichever field is present.
       attachments?: Array<{
         filename: string;
         mimeType?: string | null;
-        text: string;
+        contentType?: string | null;
+        text?: string;
+        contentBase64?: string;
       }>;
       // Subject + plain-text body. Sent WHEN the .eml is omitted, so the router
       // still has the email context (some orders carry info in the body, not the
@@ -965,9 +970,17 @@ export class AiExtractionService {
       }
       const analysis = this.parseEmailAnalysis(raw);
       if (analysis) {
-        // Keep the payload light: the full base64 would bloat the audit row.
+        // Keep the payload light: the full base64 (the .eml OR the attachment
+        // files in Format B) would bloat the audit row.
+        const previewAttachments = (requestBody as any).attachments?.map(
+          (a: any) =>
+            a?.contentBase64
+              ? { ...a, contentBase64: `…(${String(a.contentBase64).length} bytes)` }
+              : a,
+        );
         analysis.requestPreview = {
           ...requestBody,
+          ...(previewAttachments ? { attachments: previewAttachments } : {}),
           ...(omitEml
             ? {}
             : {
