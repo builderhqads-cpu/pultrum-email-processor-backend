@@ -293,6 +293,20 @@ export const TRANSPORT_BOOKING_FIELD_RULES: TransportBookingFieldRule[] = [
     ],
   },
   {
+    key: 'delivery_date_till',
+    label: 'Delivery date till',
+    xmlPath: 'transportbooking.shipments.shipment.deliveryaddress.datetill',
+    requirement: RECOMMENDED,
+    aliases: [
+      'delivery date till',
+      'delivery date to',
+      'delivery until date',
+      'unloading date till',
+      'unloading date to',
+      'losdatum tot',
+    ],
+  },
+  {
     key: 'delivery_time',
     label: 'Delivery time',
     xmlPath: 'transportbooking.shipments.shipment.deliveryaddress.time',

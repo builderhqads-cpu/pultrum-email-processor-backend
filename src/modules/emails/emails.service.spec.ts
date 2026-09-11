@@ -37,6 +37,10 @@ describe('EmailsService', () => {
           },
         })),
       },
+      // findOne resolves per-profile documenttype rules for the customer.
+      customerProfile: {
+        findFirst: jest.fn(async () => null),
+      },
     };
 
     const service = new EmailsService(prismaService);

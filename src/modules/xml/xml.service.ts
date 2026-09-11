@@ -10,6 +10,7 @@ import { OrderFieldSource } from '@prisma/client';
 import {
   concernsForDocumentType,
   DocumentTypeRuleCategory,
+  EMAIL_DOCUMENT_TYPE,
   isXmlDocumentAttachment,
   normalizeDocumentTypeRules,
   resolveAttachmentDocumentType,
@@ -224,7 +225,7 @@ export class XmlService {
     if (emailMessage.rawMimeBase64?.trim()) {
       documentEntries.push({
         // 19 = EMAIL (the original .eml), per Rick/ArtSystems (2026-08-06).
-        documentType: '19',
+        documentType: EMAIL_DOCUMENT_TYPE,
         fileName: this.normalizeDocumentFileName(
           emailMessage.rawMimeFileName,
           'original-email.eml',
@@ -787,10 +788,12 @@ export class XmlService {
       .ele('date')
       .txt(this.getFieldValue(fieldMap, 'delivery_date'))
       .up();
-    // Emit datetill even when empty, exactly like pickupaddress above. When the
-    // element is ABSENT, Transpas defaults the "Losdatum tot" to the delivery
-    // date; a present-but-empty <datetill/> keeps it empty, which is what Niek
-    // wants (a lone delivery date must not produce a date-till).
+    // Emit datetill even when empty, exactly like pickupaddress above. Niek
+    // (2026-09-11) reversed the earlier rule: a lone delivery date now DOES
+    // produce a date-till equal to that date (same day), filled deterministically
+    // by fillMissingDateTill — same effective result as Transpas defaulting an
+    // absent element to the delivery date, but explicit. A real range keeps the
+    // two distinct dates the AI extracted.
     delivery.ele('datetill').txt(deliveryDateTill).up();
     delivery
       .ele('time')

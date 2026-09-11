@@ -403,7 +403,7 @@ export function routeTimeBounds(
     apply(FROM_RE, 'from');
   }
 
-  return fillMissingTimeTill(out);
+  return fillMissingDateTill(fillMissingTimeTill(out));
 }
 
 /**
@@ -424,6 +424,31 @@ export function fillMissingTimeTill(
     const from = normalizeTime(String(out[fromKey] ?? ''));
     const hasTill = String(out[tillKey] ?? '').trim().length > 0;
     if (/^\d{2}:\d{2}$/.test(from) && !hasTill) {
+      out[tillKey] = from;
+    }
+  }
+  return out;
+}
+
+/**
+ * Niek (2026-09-11): mirror the time rule onto the DATE. When only a single
+ * load/unload date is given ("*_date") and no "date till" ("*_date_till"), the
+ * upper bound equals that date — the order is for that one day. A given range
+ * ("tomorrow or the day after") is left to the AI, which fills both *_date and
+ * *_date_till; this function never overwrites a till that is already present
+ * (asymmetric, exactly like fillMissingTimeTill). Format-agnostic: the date
+ * value is copied verbatim, so it works whatever date format upstream produced.
+ */
+export function fillMissingDateTill(
+  fields: Record<string, unknown>,
+): Record<string, unknown> {
+  const out = { ...fields };
+  for (const side of ['pickup', 'delivery'] as const) {
+    const fromKey = `${side}_date`;
+    const tillKey = `${side}_date_till`;
+    const from = String(out[fromKey] ?? '').trim();
+    const hasTill = String(out[tillKey] ?? '').trim().length > 0;
+    if (from && !hasTill) {
       out[tillKey] = from;
     }
   }

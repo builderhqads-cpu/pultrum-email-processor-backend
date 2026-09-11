@@ -3,6 +3,7 @@ import {
   blankIfZeroPreservingDecimalString,
   dashLtReference,
   dropNameIfCity,
+  fillMissingDateTill,
   fillMissingTimeTill,
   widthMmToCm,
   normalizeFieldMap,
@@ -124,6 +125,34 @@ describe('field-normalize', () => {
     it('does not touch dates (Losdatum tot stays untouched here)', () => {
       const out = fillMissingTimeTill({ delivery_date: '2026-08-28' });
       expect(out.delivery_date_till).toBeUndefined();
+    });
+  });
+
+  // Niek 2026-09-11: mirror the time rule onto the date. A lone load/unload date
+  // fills the "date till" with the same day; an explicit range is left intact.
+  describe('fillMissingDateTill', () => {
+    it('mirrors *_date into an empty *_date_till for pickup and delivery', () => {
+      const out = fillMissingDateTill({
+        pickup_date: '2026-09-14',
+        delivery_date: '2026-09-15',
+      });
+      expect(out.pickup_date_till).toBe('2026-09-14');
+      expect(out.delivery_date_till).toBe('2026-09-15');
+    });
+
+    it('keeps an explicit *_date_till (a real range) and never fills *_date back', () => {
+      const out = fillMissingDateTill({
+        pickup_date: '2026-09-14',
+        pickup_date_till: '2026-09-15',
+        delivery_date_till: '2026-09-16',
+      });
+      expect(out.pickup_date_till).toBe('2026-09-15');
+      expect(out.delivery_date).toBeUndefined();
+    });
+
+    it('does not touch times', () => {
+      const out = fillMissingDateTill({ delivery_time: '08:00' });
+      expect(out.delivery_time_till).toBeUndefined();
     });
   });
 

@@ -3,7 +3,11 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
+  concernsForDocumentType,
+  EMAIL_DOCUMENT_TYPE,
   isXmlDocumentAttachment,
+  normalizeDocumentTypeRules,
+  resolveAttachmentDocumentType,
   xmlDocumentsEnabled,
 } from '../../utils/xml-documents';
 import { QUEUE_EMAIL_PROCESSING } from '../queues/queue-names';
@@ -123,6 +127,7 @@ export class EmailsService {
             department: true,
             type: true,
             overallConfidence: true,
+            customerEmail: true,
             createdAt: true,
             updatedAt: true,
           },
@@ -144,6 +149,36 @@ export class EmailsService {
     // the order detail can mark them. Same rule the XML builder uses.
     const docsEnabled = xmlDocumentsEnabled();
 
+    // Niek (2026-09-11): show the documenttype each document gets in the XML,
+    // and list the original e-mail itself as a document (type 19). The
+    // per-profile documenttype rules are keyed by the customer's email, matched
+    // the same way the XML builder does (resolveDocumentTypeRules in xml.service).
+    const customerEmail = (
+      order?.customerEmail ??
+      email.linkedOrder?.customerEmail ??
+      email.fromEmail ??
+      ''
+    )
+      .trim()
+      .toLowerCase();
+    const documentTypeRules = customerEmail
+      ? await this.resolveDocumentTypeRules(customerEmail)
+      : {};
+
+    // Each document that will be embedded in the <documents> block, with its
+    // resolved documenttype — the original e-mail first (type 19), then every
+    // included attachment. Empty when documents are disabled.
+    const emailDocument =
+      docsEnabled && email.rawMimeBase64?.trim()
+        ? {
+            fileName:
+              (email.rawMimeFileName || '').trim() || 'original-email.eml',
+            mimeType: 'message/rfc822',
+            documentType: EMAIL_DOCUMENT_TYPE,
+            concerns: concernsForDocumentType(EMAIL_DOCUMENT_TYPE),
+          }
+        : null;
+
     return {
       id: email.id,
       providerMessageId: email.graphMessageId,
@@ -162,10 +197,28 @@ export class EmailsService {
       classificationLanguage: email.classificationLanguage,
       classifiedAt: email.classifiedAt,
       mailbox: email.mailbox,
-      attachments: email.attachments.map((att) => ({
-        ...att,
-        includedInXml: docsEnabled && isXmlDocumentAttachment(att),
-      })),
+      attachments: email.attachments.map((att) => {
+        const includedInXml = docsEnabled && isXmlDocumentAttachment(att);
+        const documentType = includedInXml
+          ? resolveAttachmentDocumentType({
+              fileName: att.fileName,
+              mimeType: att.mimeType,
+              documentPurpose: att.documentPurpose,
+              rules: documentTypeRules,
+            })
+          : null;
+        return {
+          ...att,
+          includedInXml,
+          // Niek: the Transpas documenttype this file goes out as (per-profile
+          // rule > AI purpose > default 92), so the panel can show it.
+          documentType,
+          concerns: documentType ? concernsForDocumentType(documentType) : null,
+        };
+      }),
+      // The original e-mail as an XML document (type 19), shown in the panel
+      // alongside the attachments so operators see everything that is sent.
+      emailDocument,
       order: order
         ? {
             id: order.id,
@@ -195,6 +248,25 @@ export class EmailsService {
         batchSequence: o.batchSequence,
       })),
     };
+  }
+
+  /**
+   * Per-profile documenttype rules (Sander) for a customer, matched by email
+   * against the profile's primary/additional addresses. Twin of
+   * XmlService.resolveDocumentTypeRules so the panel shows exactly the
+   * documenttype the XML builder will emit. {} when no profile or no rules.
+   */
+  private async resolveDocumentTypeRules(customerEmail?: string | null) {
+    const email = (customerEmail || '').trim().toLowerCase();
+    if (!email) return {};
+    const profile = await this.prismaService.customerProfile.findFirst({
+      where: {
+        active: true,
+        OR: [{ contactEmail: email }, { emails: { some: { email } } }],
+      },
+      select: { documentTypeRules: true },
+    });
+    return normalizeDocumentTypeRules(profile?.documentTypeRules);
   }
 
   /** Rebuild the email as received (HTML + embedded signature images). */

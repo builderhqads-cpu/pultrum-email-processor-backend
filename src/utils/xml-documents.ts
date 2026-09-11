@@ -290,6 +290,13 @@ export function redactFiledataForPreview(xml: string): string {
   );
 }
 
+/**
+ * Transpas documenttype for the original e-mail (.eml) document, per
+ * Rick/ArtSystems (2026-08-06). Kept as a shared constant so the XML builder and
+ * the emails API never disagree on the e-mail's type.
+ */
+export const EMAIL_DOCUMENT_TYPE = '19';
+
 /** Human "concerns" label for a resolved documenttype code. */
 export function concernsForDocumentType(documentType?: string | null): string {
   switch ((documentType ?? '').trim()) {
