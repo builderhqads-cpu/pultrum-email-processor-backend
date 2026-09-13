@@ -338,7 +338,7 @@ export class XmlService {
     });
   }
 
-  private assertRequiredNonEmpty(values: Record<string, string>) {
+  private assertRequiredNonEmpty(values: Record<string, string>, force = false) {
     // customer_id follows the SAME override as the readiness/completeness gate
     // (CREATIVE_GEARS_REQUIRE_CUSTOMER_ID, default off), so "Ready for XML" and
     // "can generate XML" never disagree. Mirrors the validation service.
@@ -346,11 +346,19 @@ export class XmlService {
       (process.env.CREATIVE_GEARS_REQUIRE_CUSTOMER_ID ?? '').trim().toLowerCase(),
     );
 
-    const requiredKeys = TRANSPORT_BOOKING_FIELD_RULES.filter(
-      (r) => getRuleRequirement(r) === FieldRequirement.REQUIRED,
-    )
-      .map((r) => r.key)
-      .filter((k) => k !== 'customer_id' || requireCustomerId);
+    // Force send (Niek 2026-09-11): the operator chose to send despite missing
+    // data. We drop every required-field check EXCEPT customer_id — it is an
+    // exact-match lookup in Transpas, so an empty one would break the import or
+    // attach the booking to no account. Everything else is allowed through.
+    const requiredKeys = force
+      ? requireCustomerId
+        ? ['customer_id']
+        : []
+      : TRANSPORT_BOOKING_FIELD_RULES.filter(
+          (r) => getRuleRequirement(r) === FieldRequirement.REQUIRED,
+        )
+          .map((r) => r.key)
+          .filter((k) => k !== 'customer_id' || requireCustomerId);
 
     const missing = requiredKeys.filter(
       (k) => !sanitizeExtractedValue(values[k] ?? ''),
@@ -358,7 +366,9 @@ export class XmlService {
 
     if (missing.length) {
       throw new Error(
-        `Cannot generate XML. Required fields are empty: ${missing.join(', ')}`,
+        force
+          ? `Cannot force send XML. customer_id (klantnummer) is required even when forcing.`
+          : `Cannot generate XML. Required fields are empty: ${missing.join(', ')}`,
       );
     }
   }
@@ -380,7 +390,14 @@ export class XmlService {
     }
   }
 
-  async generateOrderXml(orderId: string): Promise<string> {
+  async generateOrderXml(
+    orderId: string,
+    options?: { force?: boolean },
+  ): Promise<string> {
+    // Force send (Niek 2026-09-11): bypass the status + missing-fields guards so
+    // an incomplete order can still be delivered. customer_id stays required
+    // (enforced in assertRequiredNonEmpty).
+    const force = options?.force ?? false;
     const retryableStatuses = new Set<OrderStatus>([
       OrderStatus.READY_TO_XML,
       OrderStatus.CREATIVE_GEARS_REJECTED,
@@ -412,14 +429,15 @@ export class XmlService {
       throw new Error(`TransportOrder not found: id=${orderId}`);
     }
 
-    if (!retryableStatuses.has(order.status)) {
+    if (!force && !retryableStatuses.has(order.status)) {
       throw new Error(
         `Cannot generate XML for orderId=${orderId}. Order status must be READY_TO_XML or retryable after XML delivery failure/rejection (current=${order.status}).`,
       );
     }
 
-    // Safety: even after validation, never generate when missing fields exist.
-    if (order.missingFields?.length) {
+    // Safety: even after validation, never generate when missing fields exist —
+    // unless the operator explicitly forced the send.
+    if (!force && order.missingFields?.length) {
       const keys = order.missingFields.map((m) => m.key).join(', ');
       throw new Error(
         `Cannot generate XML for orderId=${orderId}. Missing fields in DB: ${keys}`,
@@ -686,7 +704,8 @@ export class XmlService {
     valuesForValidation.height = height;
 
     // Final guard: block only when required Pultrum fields are still empty.
-    this.assertRequiredNonEmpty(valuesForValidation);
+    // With force, only customer_id is enforced (see assertRequiredNonEmpty).
+    this.assertRequiredNonEmpty(valuesForValidation, force);
 
     const doc = create({ version: '1.0', encoding: 'UTF-8' })
       .ele('import')

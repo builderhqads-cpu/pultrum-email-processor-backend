@@ -47,14 +47,15 @@ export class CreativeGearsService {
     return text.length > 2000 ? `${text.slice(0, 2000)}...` : text;
   }
 
-  private async getOrCreatePendingXmlDelivery(orderId: string) {
+  private async getOrCreatePendingXmlDelivery(orderId: string, force = false) {
     // ALWAYS regenerate from current data before sending. The PENDING payload is
     // only a preview cache — it goes stale when the order or its customer profile
     // changes (e.g. per-file documenttypes, Renato 2026-09-09), and reusing it
     // would deliver outdated XML to Creative Gears. generateOrderXml updates the
     // existing PENDING row in place (or creates one), so we send exactly what a
-    // fresh preview shows.
-    await this.xmlService.generateOrderXml(orderId);
+    // fresh preview shows. `force` lets an incomplete order through (customer_id
+    // still required) — Niek 2026-09-11.
+    await this.xmlService.generateOrderXml(orderId, { force });
 
     const pending = await this.prismaService.xmlDelivery.findFirst({
       where: { orderId, status: XmlDeliveryStatus.PENDING },
@@ -70,14 +71,14 @@ export class CreativeGearsService {
     return pending;
   }
 
-  async sendXmlDelivery(orderId: string) {
+  async sendXmlDelivery(orderId: string, force = false) {
     const order = await this.prismaService.transportOrder.findUnique({
       where: { id: orderId },
       select: { id: true, status: true },
     });
     if (!order) throw new Error(`TransportOrder not found: id=${orderId}`);
 
-    const delivery = await this.getOrCreatePendingXmlDelivery(orderId);
+    const delivery = await this.getOrCreatePendingXmlDelivery(orderId, force);
     const xmlPayload = delivery.xmlPayload;
     if (!xmlPayload)
       throw new Error(`XmlDelivery has no xmlPayload: id=${delivery.id}`);

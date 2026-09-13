@@ -34,6 +34,28 @@ import { TransportBookingValidationService } from '../transport-booking-validati
 import { AiReplyService } from '../ai-reply/ai-reply.service';
 import { XmlService } from '../xml/xml.service';
 
+// Statuses from which a normal "Send XML" is allowed: ready, or retryable after
+// a delivery failure/rejection.
+const XML_SEND_STATUSES = new Set<OrderStatus>([
+  OrderStatus.READY_TO_XML,
+  OrderStatus.CREATIVE_GEARS_REJECTED,
+  OrderStatus.FAILED,
+]);
+
+// Statuses from which a FORCE send is allowed (Niek 2026-09-11): the normal ones
+// plus the "stuck waiting for info" states — the whole point of forcing. Excludes
+// in-flight/terminal states (PROCESSING, SENT_TO_CREATIVE_GEARS,
+// CREATIVE_GEARS_ACCEPTED, EMAIL_RECEIVED).
+const XML_FORCE_SEND_STATUSES = new Set<OrderStatus>([
+  ...XML_SEND_STATUSES,
+  OrderStatus.WAITING_CUSTOMER_RESPONSE,
+  OrderStatus.MISSING_INFORMATION,
+  OrderStatus.MANUAL_REVIEW,
+  OrderStatus.NEW_ORDER,
+  OrderStatus.MODIFICATION_DETECTED,
+  OrderStatus.XML_GENERATED,
+]);
+
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
@@ -855,13 +877,7 @@ export class OrdersService {
     this.logger.log(`Reprocessed batch order ${order.id} from rawOrderText`);
   }
 
-  async sendXml(id: string) {
-    const retryableStatuses = new Set<OrderStatus>([
-      OrderStatus.READY_TO_XML,
-      OrderStatus.CREATIVE_GEARS_REJECTED,
-      OrderStatus.FAILED,
-    ]);
-
+  async sendXml(id: string, force = false) {
     const order = await this.prismaService.transportOrder.findUnique({
       where: { id },
       select: {
@@ -875,21 +891,31 @@ export class OrdersService {
       },
     });
     if (!order) throw new NotFoundException(`Order not found: id=${id}`);
-    if (order.missingFields.length > 0) {
-      const keys = order.missingFields.map((field) => field.key).join(', ');
+
+    // Force send (Niek 2026-09-11): the operator chose to deliver despite
+    // missing data — skip the missing-fields guard and allow the "stuck for
+    // info" statuses too. customer_id is still enforced when the XML is built.
+    if (!force) {
+      if (order.missingFields.length > 0) {
+        const keys = order.missingFields.map((field) => field.key).join(', ');
+        throw new NotFoundException(
+          `Order cannot send XML while required fields are missing: ${keys}`,
+        );
+      }
+      if (!XML_SEND_STATUSES.has(order.status)) {
+        throw new NotFoundException(
+          `Order must be READY_TO_XML or retryable after XML delivery failure/rejection (current=${order.status})`,
+        );
+      }
+    } else if (!XML_FORCE_SEND_STATUSES.has(order.status)) {
       throw new NotFoundException(
-        `Order cannot send XML while required fields are missing: ${keys}`,
-      );
-    }
-    if (!retryableStatuses.has(order.status)) {
-      throw new NotFoundException(
-        `Order must be READY_TO_XML or retryable after XML delivery failure/rejection (current=${order.status})`,
+        `Order cannot be force sent from status=${order.status}`,
       );
     }
 
     await this.xmlDeliveryQueue.add(
       'xml-delivery',
-      { orderId: id },
+      { orderId: id, force },
       { jobId: `manual_xml-delivery_${id}_${Date.now()}` },
     );
 
@@ -898,16 +924,13 @@ export class OrdersService {
 
   /**
    * Niek: send the XML for a whole batch at once. Enqueues one delivery per
-   * eligible order in the batch (same guards as sendXml: no missing required
-   * fields + a retryable status). Returns how many were enqueued vs skipped.
+   * eligible order in the batch. Normal send uses the same guards as sendXml (no
+   * missing required fields + a retryable status). Force send (Niek 2026-09-11)
+   * ignores missing fields and includes the "stuck for info" statuses too;
+   * customer_id is still enforced per order when its XML is built, so an order
+   * without a klantnummer will fail delivery rather than being sent blank.
    */
-  async sendBatchXml(batchImportId: string) {
-    const retryableStatuses = new Set<OrderStatus>([
-      OrderStatus.READY_TO_XML,
-      OrderStatus.CREATIVE_GEARS_REJECTED,
-      OrderStatus.FAILED,
-    ]);
-
+  async sendBatchXml(batchImportId: string, force = false) {
     const orders = await this.prismaService.transportOrder.findMany({
       where: { batchImportId },
       select: {
@@ -920,16 +943,19 @@ export class OrdersService {
       throw new NotFoundException(`No orders found for batch: ${batchImportId}`);
     }
 
-    const eligible = orders.filter(
-      (o) => o._count.missingFields === 0 && retryableStatuses.has(o.status),
-    );
+    const eligible = force
+      ? orders.filter((o) => XML_FORCE_SEND_STATUSES.has(o.status))
+      : orders.filter(
+          (o) =>
+            o._count.missingFields === 0 && XML_SEND_STATUSES.has(o.status),
+        );
 
     const now = Date.now();
     await Promise.all(
       eligible.map((o, i) =>
         this.xmlDeliveryQueue.add(
           'xml-delivery',
-          { orderId: o.id },
+          { orderId: o.id, force },
           { jobId: `manual_xml-delivery_${o.id}_${now}_${i}` },
         ),
       ),

@@ -14,12 +14,15 @@ export class XmlDeliveryProcessor extends WorkerHost {
 
   async process(job: Job): Promise<void> {
     const orderId = job.data?.orderId as string | undefined;
+    // Force send (Niek 2026-09-11): the operator chose to deliver an incomplete
+    // order. customer_id stays required (enforced downstream).
+    const force = job.data?.force === true;
     if (orderId) {
       this.logger.log(
-        `Sending XML delivery to Creative Gears: orderId=${orderId}`,
+        `Sending XML delivery to Creative Gears: orderId=${orderId}${force ? ' (forced)' : ''}`,
       );
       try {
-        await this.creativeGearsService.sendXmlDelivery(orderId);
+        await this.creativeGearsService.sendXmlDelivery(orderId, force);
       } catch (err: any) {
         this.logger.error(
           `XML delivery failed: orderId=${orderId} jobId=${job.id} message=${err?.message ?? String(err)}`,

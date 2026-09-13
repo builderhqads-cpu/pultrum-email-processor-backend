@@ -57,11 +57,27 @@ export class OrdersController {
     return this.ordersService.sendXml(id);
   }
 
+  // Niek 2026-09-11: force send — deliver even with required fields missing
+  // (customer_id still required). Separate route so it's an explicit action.
+  @Post(':id/force-send-xml')
+  @UseGuards(JwtAuthGuard)
+  forceSendXml(@Param('id') id: string) {
+    return this.ordersService.sendXml(id, true);
+  }
+
   // Niek: send the XML for a whole batch at once.
   @Post('batch/:batchImportId/send-xml')
   @UseGuards(JwtAuthGuard)
   sendBatchXml(@Param('batchImportId') batchImportId: string) {
     return this.ordersService.sendBatchXml(batchImportId);
+  }
+
+  // Niek 2026-09-11: force send the whole batch (missing fields ignored per
+  // order; customer_id still required).
+  @Post('batch/:batchImportId/force-send-xml')
+  @UseGuards(JwtAuthGuard)
+  forceSendBatchXml(@Param('batchImportId') batchImportId: string) {
+    return this.ordersService.sendBatchXml(batchImportId, true);
   }
 
   @Post(':id/send-ai-request')
