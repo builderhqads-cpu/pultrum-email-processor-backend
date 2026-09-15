@@ -707,6 +707,16 @@ export class XmlService {
     // With force, only customer_id is enforced (see assertRequiredNonEmpty).
     this.assertRequiredNonEmpty(valuesForValidation, force);
 
+    // Fixed price (Niek): the agreed transport price the AI extracts (portal
+    // "Fixed price"). Rick/ArtSystems (2026-09-15): it must be <fixedprice> at
+    // the TRANSPORTBOOKING level, NOT <price> in the cargo line — Transpas does
+    // not import the cargo price. Stored under fixed_price or the legacy price
+    // key; blankIfZero strips currency (€) and normalizes ("640,00" -> 640).
+    const fixedPrice = blankIfZero(
+      this.getFieldValue(fieldMap, 'fixed_price') ||
+        this.getFieldValue(fieldMap, 'price'),
+    );
+
     const doc = create({ version: '1.0', encoding: 'UTF-8' })
       .ele('import')
       // ediprovider_id routes this stream to a dedicated Transpas intake
@@ -726,6 +736,12 @@ export class XmlService {
       .up()
       .ele('customer_id', { matchmode: '1' })
       .txt(customerId)
+      .up()
+      // Rick/ArtSystems (2026-09-15): the agreed price is imported only from
+      // <fixedprice> here at the transportbooking level (no matchmode). Emitted
+      // even when empty, like the other booking-header fields.
+      .ele('fixedprice')
+      .txt(fixedPrice)
       .up()
       .ele('shipments')
       .ele('shipment')
@@ -896,17 +912,9 @@ export class XmlService {
     cargo.ele('length').txt(blankIfZero(length)).up();
     cargo.ele('width').txt(blankIfZero(width)).up();
     cargo.ele('height').txt(blankIfZero(height)).up();
-    // Fixed price (Niek): the agreed transport price the AI extracts (portal
-    // "Fixed price") maps to cargo/price. Stored under either fixed_price or the
-    // legacy price key — emit whichever is present, only when non-empty.
-    // blankIfZero strips currency (€) and normalizes notation ("640,00" -> 640).
-    const cargoPrice = blankIfZero(
-      this.getFieldValue(fieldMap, 'fixed_price') ||
-        this.getFieldValue(fieldMap, 'price'),
-    );
-    if (cargoPrice) {
-      cargo.ele('price').txt(cargoPrice).up();
-    }
+    // NOTE: the fixed price is NOT emitted here. It goes to <fixedprice> at the
+    // transportbooking level (Rick/ArtSystems 2026-09-15) — Transpas does not
+    // import a price on the cargo line.
 
     const goodslines = cargo.ele('goodslines').ele('goodsline');
     goodslines.ele('unitamount').txt(normalizeQuantity(goodsUnitAmount)).up();

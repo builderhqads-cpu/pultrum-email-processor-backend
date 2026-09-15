@@ -463,7 +463,7 @@ describe('XmlService generateOrderXml normalization', () => {
     }
   });
 
-  it('emits the extracted fixed_price into cargo/price (Niek)', async () => {
+  it('emits the extracted fixed_price into transportbooking/fixedprice (Rick)', async () => {
     const prisma = {
       transportOrder: {
         findUnique: jest.fn().mockResolvedValue({
@@ -487,7 +487,7 @@ describe('XmlService generateOrderXml normalization', () => {
             { key: 'delivery_country', value: 'NL' },
             { key: 'cargo_unit_amount', value: '1' },
             { key: 'cargo_unit_id', value: 'Bundel' },
-            // Portal "Fixed price 640" -> cargo/price.
+            // Portal "Fixed price 640" -> transportbooking/fixedprice.
             { key: 'fixed_price', value: '€ 640,00' },
           ],
           emailMessage: { subject: 'Collection Note Report', attachments: [] },
@@ -505,10 +505,12 @@ describe('XmlService generateOrderXml normalization', () => {
     const xml = await service.generateOrderXml('order-fp');
 
     // Currency stripped, decimal notation normalized, zero cents dropped.
-    expect(xml).toContain('<price>640</price>');
+    // Booking-level <fixedprice>, and NOT a cargo-line <price> (Rick/ArtSystems).
+    expect(xml).toContain('<fixedprice>640</fixedprice>');
+    expect(xml).not.toContain('<price>640');
   });
 
-  it('omits cargo/price when no fixed_price is present', async () => {
+  it('emits an empty fixedprice and no cargo price when no fixed_price is present', async () => {
     const prisma = {
       transportOrder: {
         findUnique: jest.fn().mockResolvedValue({
@@ -547,6 +549,7 @@ describe('XmlService generateOrderXml normalization', () => {
     const service = new XmlService(prisma, {} as any);
     const xml = await service.generateOrderXml('order-nofp');
 
+    expect(xml).toContain('<fixedprice/>');
     expect(xml).not.toContain('<price>');
   });
 
