@@ -16,7 +16,11 @@ import {
   TransportBookingFieldRule,
 } from '../required-fields/transport-booking-field-rules';
 import { sanitizeExtractedValue } from '../../utils/sanitize';
-import { normalizeFieldMap, parseDecimal } from '../../utils/field-normalize';
+import {
+  extractTrNumber,
+  normalizeFieldMap,
+  parseDecimal,
+} from '../../utils/field-normalize';
 import { SystemSettingsService } from '../system-settings/system-settings.service';
 
 const normalizeWhitespace = (value: string) =>
@@ -403,6 +407,23 @@ export class TransportBookingValidationService {
       input.baseConfidenceByKey ?? new Map<string, number>();
     const sourceByKey =
       input.baseSourceByKey ?? new Map<string, OrderFieldSource>();
+
+    // Derix (Niek 2026-09-16): deterministic invoice_reference fallback, applied
+    // at the SINGLE validation choke point so it covers EVERY processing path
+    // (initial, reprocess, batch, customer-reply merge). When invoice_reference
+    // is empty, fill it with the order's TR number taken from the load/unload
+    // reference (e.g. "26TR002398-LT01" -> "26TR002398"). Only fires when a TR
+    // actually exists, so customers without a TR reference are unaffected.
+    if (!sanitizeExtractedValue(map.get('invoice_reference') || '')) {
+      const tr = extractTrNumber(
+        map.get('pickup_reference'),
+        map.get('delivery_reference'),
+      );
+      if (tr) {
+        map.set('invoice_reference', tr);
+        confidenceByKey.set('invoice_reference', 1.0);
+      }
+    }
 
     // Generated fields
     const edireference =
