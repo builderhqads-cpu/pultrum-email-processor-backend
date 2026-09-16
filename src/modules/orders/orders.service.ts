@@ -17,7 +17,10 @@ import {
 } from '@prisma/client';
 import { ClientProfileService } from '../client-profiles/client-profile.service';
 import { TRANSPORT_BOOKING_FIELD_RULES } from '../required-fields/transport-booking-field-rules';
-import { routeTimeBounds } from '../../utils/field-normalize';
+import {
+  applyInvoiceRefTrFallback,
+  routeTimeBounds,
+} from '../../utils/field-normalize';
 import { redactFiledataForPreview } from '../../utils/xml-documents';
 import {
   QUEUE_AI_REQUEST,
@@ -867,7 +870,12 @@ export class OrdersService {
         orderId: order.id,
         emailMessageId: order.emailMessageId,
         emailSubject: order.emailMessage?.subject ?? '',
-        fieldValues: routeTimeBounds(merged, text),
+        // Derix (Niek 2026-09-16): fill an empty invoice_reference with the
+        // order's TR (deterministic, router-independent, always on).
+        fieldValues: applyInvoiceRefTrFallback(
+          routeTimeBounds(merged, text),
+          order.externalReference,
+        ),
         source: 'ai',
         fieldMetaByKey: this.buildProfileFieldMeta(presetFields, merged),
       },

@@ -46,6 +46,13 @@ export interface ClientProfile {
   aiInstructions?: string;
 
   /**
+   * Niek/Derix (2026-09-16): when true, an empty invoice_reference is filled
+   * deterministically with the order's TR number (the AI fallback isn't reliable
+   * across routers). Per-customer — only profiles that opt in are affected.
+   */
+  invoiceReferenceFallbackToTr?: boolean;
+
+  /**
    * Regex (as string) used to pull a reference out of the text, keyed by field.
    * First capture group (or full match) wins. E.g. invoice_reference -> the BA
    * number, pickup_reference -> the TR number.

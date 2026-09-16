@@ -313,6 +313,9 @@ model CustomerProfile {
   /// { "pdf": "91", "word": "92", "excel": "87", "image": "92" } — only the
   /// set categories are present. Read by the XML builder when embedding docs.
   documentTypeRules Json?
+  /// Niek/Derix (2026-09-16): when true, an empty invoice_reference is filled
+  /// deterministically with the order's TR number. Per-customer; off by default.
+  invoiceReferenceFallbackToTr Boolean @default(false)
   createdAt    DateTime              @default(now())
   updatedAt    DateTime              @updatedAt
 

@@ -2,7 +2,9 @@ import {
   blankIfZero,
   blankIfZeroPreservingDecimalString,
   dashLtReference,
+  applyInvoiceRefTrFallback,
   dropNameIfCity,
+  extractTrNumber,
   fillMissingDateTill,
   fillMissingTimeTill,
   widthMmToCm,
@@ -153,6 +155,45 @@ describe('field-normalize', () => {
     it('does not touch times', () => {
       const out = fillMissingDateTill({ delivery_time: '08:00' });
       expect(out.delivery_time_till).toBeUndefined();
+    });
+  });
+
+  // Niek/Derix 2026-09-16: deterministic invoice_reference fallback to the TR.
+  describe('extractTrNumber', () => {
+    it('extracts the bare TR, ignoring a leg suffix', () => {
+      expect(extractTrNumber('26TR002398-3')).toBe('26TR002398');
+    });
+    it('extracts the TR from a laadreferentie with LT', () => {
+      expect(extractTrNumber('26TR000691 LT30')).toBe('26TR000691');
+    });
+    it('takes the first candidate that has a TR', () => {
+      expect(extractTrNumber('', null, '71TR586230 LT1')).toBe('71TR586230');
+    });
+    it('returns empty when no candidate has a TR', () => {
+      expect(extractTrNumber('BA123', '', null)).toBe('');
+    });
+  });
+
+  describe('applyInvoiceRefTrFallback', () => {
+    it('fills an empty invoice_reference with the order TR', () => {
+      const out = applyInvoiceRefTrFallback(
+        { pickup_reference: '26TR002398 LT01' },
+        '26TR002398-2',
+      );
+      expect(out.invoice_reference).toBe('26TR002398');
+    });
+
+    it('never overwrites an existing invoice_reference (real BA)', () => {
+      const out = applyInvoiceRefTrFallback(
+        { invoice_reference: '26BA009131', pickup_reference: '26TR002398' },
+        '26TR002398',
+      );
+      expect(out.invoice_reference).toBe('26BA009131');
+    });
+
+    it('leaves invoice_reference empty when no TR is available', () => {
+      const out = applyInvoiceRefTrFallback({ pickup_reference: '' }, null);
+      expect(out.invoice_reference).toBeUndefined();
     });
   });
 

@@ -454,3 +454,37 @@ export function fillMissingDateTill(
   }
   return out;
 }
+
+/** The bare TR number (e.g. "26TR002398") from the first candidate that has one,
+ * ignoring any leg suffix ("26TR002398-3" -> "26TR002398"). '' when none. */
+export function extractTrNumber(
+  ...candidates: Array<unknown>
+): string {
+  for (const candidate of candidates) {
+    const match = (candidate ?? '').toString().match(/\d*TR\d+/i);
+    if (match) return match[0].toUpperCase();
+  }
+  return '';
+}
+
+/**
+ * Niek/Derix (2026-09-16): deterministic invoice-reference fallback. When
+ * invoice_reference is empty, fill it with the order's TR number (bare, e.g.
+ * "26TR002398") — the same rule the AI was told to apply but does not do reliably
+ * across routers. Always on (Niek: no per-customer toggle); it only fires when a
+ * TR reference actually exists, so customers without a TR are unaffected, and it
+ * never overwrites a value that is already present (e.g. a real BA number).
+ */
+export function applyInvoiceRefTrFallback(
+  fields: Record<string, unknown>,
+  externalReference?: string | null,
+): Record<string, unknown> {
+  if (String(fields['invoice_reference'] ?? '').trim()) return fields;
+  const tr = extractTrNumber(
+    externalReference,
+    fields['pickup_reference'],
+    fields['delivery_reference'],
+  );
+  if (!tr) return fields;
+  return { ...fields, invoice_reference: tr };
+}

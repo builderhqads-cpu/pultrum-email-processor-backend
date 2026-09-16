@@ -44,6 +44,11 @@ type CustomerProfileMutationInput = {
    * (pdf/word/excel/image) for this customer, overriding the AI. null = clear.
    */
   documentTypeRules: Partial<Record<DocumentTypeRuleCategory, string>> | null;
+  /**
+   * Niek/Derix: fill an empty invoice_reference with the order's TR number.
+   * Per-customer; off by default.
+   */
+  invoiceReferenceFallbackToTr: boolean;
 };
 
 type CustomerProfileRecord = Awaited<
@@ -201,6 +206,7 @@ export class ClientProfileService implements OnModuleInit {
       ]),
       fixedFields: toFieldMap(profile.fields),
       aiInstructions: normalizeValue(profile.aiInstructions ?? '') || undefined,
+      invoiceReferenceFallbackToTr: profile.invoiceReferenceFallbackToTr,
       notes: profile.notes ?? undefined,
     }));
   }
@@ -430,6 +436,7 @@ export class ClientProfileService implements OnModuleInit {
           active: input.active,
           notes: input.notes,
           aiInstructions: input.aiInstructions,
+          invoiceReferenceFallbackToTr: input.invoiceReferenceFallbackToTr,
           ...(input.documentTypeRules
             ? { documentTypeRules: input.documentTypeRules }
             : {}),
@@ -513,6 +520,9 @@ export class ClientProfileService implements OnModuleInit {
           ...(input.notes !== undefined ? { notes: input.notes } : {}),
           ...(input.aiInstructions !== undefined
             ? { aiInstructions: input.aiInstructions }
+            : {}),
+          ...(input.invoiceReferenceFallbackToTr !== undefined
+            ? { invoiceReferenceFallbackToTr: input.invoiceReferenceFallbackToTr }
             : {}),
           ...(input.documentTypeRules !== undefined
             ? {
@@ -627,6 +637,7 @@ export class ClientProfileService implements OnModuleInit {
       notes: profile.notes,
       aiInstructions: profile.aiInstructions ?? '',
       documentTypeRules: normalizeDocumentTypeRules(profile.documentTypeRules),
+      invoiceReferenceFallbackToTr: profile.invoiceReferenceFallbackToTr,
       createdAt: profile.createdAt,
       updatedAt: profile.updatedAt,
       fields: profile.fields.map((field) => ({
@@ -658,6 +669,7 @@ export class ClientProfileService implements OnModuleInit {
     aiInstructions?: unknown;
     fields?: unknown;
     documentTypeRules?: unknown;
+    invoiceReferenceFallbackToTr?: unknown;
   }): CustomerProfileMutationInput {
     if (typeof input.name !== 'string' || !input.name.trim()) {
       throw new BadRequestException('Customer profile name is required.');
@@ -720,6 +732,15 @@ export class ClientProfileService implements OnModuleInit {
       input.documentTypeRules,
     );
 
+    if (
+      input.invoiceReferenceFallbackToTr !== undefined &&
+      typeof input.invoiceReferenceFallbackToTr !== 'boolean'
+    ) {
+      throw new BadRequestException(
+        'invoiceReferenceFallbackToTr must be a boolean.',
+      );
+    }
+
     return {
       name: input.name.trim(),
       contactEmail,
@@ -731,6 +752,8 @@ export class ClientProfileService implements OnModuleInit {
       documentTypeRules: Object.keys(documentTypeRules).length
         ? documentTypeRules
         : null,
+      invoiceReferenceFallbackToTr:
+        input.invoiceReferenceFallbackToTr === true,
     };
   }
 
@@ -743,6 +766,7 @@ export class ClientProfileService implements OnModuleInit {
     aiInstructions?: unknown;
     fields?: unknown;
     documentTypeRules?: unknown;
+    invoiceReferenceFallbackToTr?: unknown;
   }) {
     const out: Partial<CustomerProfileMutationInput> = {};
 
@@ -829,6 +853,15 @@ export class ClientProfileService implements OnModuleInit {
     if (input.documentTypeRules !== undefined) {
       const rules = normalizeDocumentTypeRules(input.documentTypeRules);
       out.documentTypeRules = Object.keys(rules).length ? rules : null;
+    }
+
+    if (input.invoiceReferenceFallbackToTr !== undefined) {
+      if (typeof input.invoiceReferenceFallbackToTr !== 'boolean') {
+        throw new BadRequestException(
+          'invoiceReferenceFallbackToTr must be a boolean.',
+        );
+      }
+      out.invoiceReferenceFallbackToTr = input.invoiceReferenceFallbackToTr;
     }
 
     if (Object.keys(out).length === 0) {

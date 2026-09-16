@@ -34,6 +34,7 @@ import { AddressEnrichmentService } from '../geocoding/address-enrichment.servic
 import type { SplitResult } from '../order-split/order-split.types';
 import { sanitizeExtractedValue } from '../../utils/sanitize';
 import {
+  applyInvoiceRefTrFallback,
   fillMissingDateTill,
   fillMissingTimeTill,
   routeTimeBounds,
@@ -799,11 +800,17 @@ export class EmailProcessingProcessor extends WorkerHost {
         // does not pass through routeTimeBounds, so mirror "time -> time_till"
         // AND "date -> date_till" here too, or a lone "Laad/Losdatum (of -tijd)
         // van" leaves the "tot" empty in Transpas (Niek).
-        const finalFields = fillMissingDateTill(
-          fillMissingTimeTill({
-            ...(o.unmappedFields ?? {}),
-            ...mergedKnownFields,
-          }),
+        // Derix (Niek 2026-09-16): deterministic fallback — an empty
+        // invoice_reference is filled with the order's TR number (always on; only
+        // fires when a TR exists). The AI fallback isn't reliable across routers.
+        const finalFields = applyInvoiceRefTrFallback(
+          fillMissingDateTill(
+            fillMissingTimeTill({
+              ...(o.unmappedFields ?? {}),
+              ...mergedKnownFields,
+            }),
+          ),
+          extRef,
         );
 
         // Niek (Derix): the sheet width is in mm and the AI leaves it
