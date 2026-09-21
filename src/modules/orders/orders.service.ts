@@ -749,6 +749,46 @@ export class OrdersService {
     return { enqueued: true, reprocessedOrder: true };
   }
 
+  /**
+   * Delete a single order (Renato 2026-09-21). Lets the planner clear
+   * wrongly-processed orders and reprocess the email without stale rows piling
+   * up. Cascades to the order's fields/missing-fields/warnings/AI-requests/
+   * reply-draft/XML-deliveries (schema onDelete: Cascade); any email linked to it
+   * has linkedOrderId set null. Idempotent queue jobs are removed first.
+   */
+  async deleteOrder(id: string) {
+    const order = await this.prismaService.transportOrder.findUnique({
+      where: { id },
+      select: { id: true, externalReference: true, emailMessageId: true },
+    });
+    if (!order) throw new NotFoundException(`Order not found: id=${id}`);
+
+    await Promise.all([
+      this.aiRequestQueue
+        .getJob(`ai-request_${id}`)
+        .then((job) => job?.remove())
+        .catch(() => undefined),
+      this.xmlDeliveryQueue
+        .getJob(`xml-delivery_${id}`)
+        .then((job) => job?.remove())
+        .catch(() => undefined),
+    ]);
+
+    await this.prismaService.transportOrder.delete({ where: { id } });
+
+    await this.auditLogService.log({
+      entityType: 'TransportOrder',
+      entityId: id,
+      action: 'ORDER_DELETED',
+      detailsJson: {
+        externalReference: order.externalReference,
+        emailMessageId: order.emailMessageId,
+      } as any,
+    });
+
+    return { deleted: true, id };
+  }
+
   /** Re-fill a single batch order from its stored rawOrderText (no siblings). */
   private async refillBatchOrder(
     order: {

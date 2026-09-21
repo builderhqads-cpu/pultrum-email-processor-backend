@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, Post, Put, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Put,
+  UseGuards,
+} from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
@@ -49,6 +58,14 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard)
   reprocess(@Param('id') id: string) {
     return this.ordersService.reprocess(id);
+  }
+
+  // Renato 2026-09-21: delete a single order so the planner can quickly clear
+  // wrongly-processed orders and reprocess the email without stale rows piling up.
+  @Delete(':id')
+  @UseGuards(JwtAuthGuard)
+  remove(@Param('id') id: string) {
+    return this.ordersService.deleteOrder(id);
   }
 
   @Post(':id/send-xml')
