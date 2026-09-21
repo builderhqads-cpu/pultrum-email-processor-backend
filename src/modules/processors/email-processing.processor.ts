@@ -35,6 +35,7 @@ import type { SplitResult } from '../order-split/order-split.types';
 import { sanitizeExtractedValue } from '../../utils/sanitize';
 import {
   applyInvoiceRefTrFallback,
+  computeLegKey,
   fillMissingDateTill,
   fillMissingTimeTill,
   routeTimeBounds,
@@ -708,6 +709,17 @@ export class EmailProcessingProcessor extends WorkerHost {
     let failed = 0;
     let seq = 0;
 
+    // Emergo (2026-09-21): some customers send several legs of ONE order under
+    // the SAME externalReference (5 trucks, differing by time/dimensions). Keying
+    // identity on (emailMessageId, externalReference) alone collapses them into
+    // one (the last wins) -> "5 of 1". Count refs so that, for a ref that repeats
+    // in this batch, we add a content-derived legKey to keep each leg distinct.
+    const refCounts = new Map<string, number>();
+    for (const o of analysis.orders) {
+      const r = (o.externalReference || '').trim();
+      if (r) refCounts.set(r, (refCounts.get(r) ?? 0) + 1);
+    }
+
     for (const o of analysis.orders) {
       seq++;
       try {
@@ -731,10 +743,22 @@ export class EmailProcessingProcessor extends WorkerHost {
         const orderCustomerName = opdrachtgever || email.fromName || null;
 
         const extRef = o.externalReference || null;
-        // Idempotency: by external reference, or (single) the primary order.
+        // Only legs whose externalReference REPEATS in this batch need a legKey;
+        // unique refs (the common case, e.g. Derix) keep the plain key so their
+        // reprocess idempotency is unchanged (no regression for existing orders).
+        const legKey =
+          isBatch && extRef && (refCounts.get(extRef) ?? 0) > 1
+            ? computeLegKey(o.fields as Record<string, unknown>) || null
+            : null;
+        // Idempotency: by external reference (+ legKey for repeated refs), or
+        // (single) the primary order.
         const existing = extRef
           ? await this.prismaService.transportOrder.findFirst({
-              where: { emailMessageId: email.id, externalReference: extRef },
+              where: {
+                emailMessageId: email.id,
+                externalReference: extRef,
+                ...(legKey ? { legKey } : {}),
+              },
               select: { id: true },
             })
           : isBatch
@@ -756,6 +780,7 @@ export class EmailProcessingProcessor extends WorkerHost {
             data: {
               batchImportId: batch?.id ?? null,
               batchSequence: isBatch ? seq : null,
+              legKey,
               // Refresh the client on reprocess (opdrachtgever may now resolve).
               customerName: orderCustomerName,
             },
@@ -767,6 +792,7 @@ export class EmailProcessingProcessor extends WorkerHost {
               batchImportId: batch?.id ?? null,
               batchSequence: isBatch ? seq : null,
               externalReference: extRef,
+              legKey,
               department: email.mailbox.department,
               type: OrderType.NEW_ORDER,
               status: OrderStatus.PROCESSING,

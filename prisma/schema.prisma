@@ -197,6 +197,11 @@ model TransportOrder {
   batchImportId          String?     @db.Uuid
   batchSequence          Int?
   externalReference      String?
+  // Emergo (2026-09-21): a content-derived signature that distinguishes batch
+  // legs which share the SAME externalReference (5 trucks for one order number),
+  // so they don't collapse into one via the (emailMessageId, externalReference)
+  // idempotency. Only set for such duplicate-reference legs; null otherwise.
+  legKey                 String?
   sourceAttachmentId     String?     @db.Uuid
   rawOrderText           String?
   createdAt              DateTime    @default(now())

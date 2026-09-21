@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 /**
  * Value-normalization helpers applied to extracted transport-booking field
  * values before they are stored and written to XML.
@@ -453,6 +455,36 @@ export function fillMissingDateTill(
     }
   }
   return out;
+}
+
+// Fields that distinguish batch legs of the SAME order (Emergo: several trucks
+// for one order number, differing by time/dimensions/references). Content-derived
+// and order-independent, so the signature is stable across reprocesses.
+const LEG_KEY_FIELDS = [
+  'pickup_reference',
+  'delivery_reference',
+  'pickup_date',
+  'pickup_time',
+  'delivery_date',
+  'delivery_time',
+  'delivery_time_till',
+  'delivery_address',
+  'width',
+  'height',
+  'length',
+  'transport_type',
+] as const;
+
+/**
+ * A short, stable, order-independent signature of a batch leg — used to keep
+ * legs that SHARE the same externalReference distinct in the batch identity.
+ * '' when none of the distinguishing fields are present (nothing to disambiguate).
+ */
+export function computeLegKey(fields: Record<string, unknown>): string {
+  const parts = LEG_KEY_FIELDS.map((k) => String(fields?.[k] ?? '').trim());
+  if (!parts.some((v) => v)) return '';
+  const canonical = LEG_KEY_FIELDS.map((k, i) => `${k}=${parts[i]}`).join('|');
+  return createHash('sha1').update(canonical).digest('hex').slice(0, 12);
 }
 
 /** The bare TR number (e.g. "26TR002398") from the first candidate that has one,

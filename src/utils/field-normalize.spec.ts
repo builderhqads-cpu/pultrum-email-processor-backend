@@ -3,6 +3,7 @@ import {
   blankIfZeroPreservingDecimalString,
   dashLtReference,
   applyInvoiceRefTrFallback,
+  computeLegKey,
   dropNameIfCity,
   extractTrNumber,
   fillMissingDateTill,
@@ -171,6 +172,32 @@ describe('field-normalize', () => {
     });
     it('returns empty when no candidate has a TR', () => {
       expect(extractTrNumber('BA123', '', null)).toBe('');
+    });
+  });
+
+  // Emergo 2026-09-21: legs sharing one externalReference must stay distinct.
+  describe('computeLegKey', () => {
+    it('is stable and order-independent for the same content', () => {
+      const a = computeLegKey({delivery_time: '07:00', width: 315, length: 1360});
+      const b = computeLegKey({width: 315, length: 1360, delivery_time: '07:00'});
+      expect(a).toBe(b);
+      expect(a).toMatch(/^[0-9a-f]{12}$/);
+    });
+
+    it('differs when a distinguishing field differs (e.g. delivery_time)', () => {
+      const leg1 = computeLegKey({delivery_time: '07:00', width: 315});
+      const leg2 = computeLegKey({delivery_time: '07:30', width: 315});
+      expect(leg1).not.toBe(leg2);
+    });
+
+    it('uses the per-leg pickup_reference to disambiguate', () => {
+      const leg1 = computeLegKey({pickup_reference: 'Rotterdam 07:00 / 11024-0382-04'});
+      const leg2 = computeLegKey({pickup_reference: 'Rotterdam 07:30 / 11024-0382-04'});
+      expect(leg1).not.toBe(leg2);
+    });
+
+    it('returns empty when nothing distinguishing is present', () => {
+      expect(computeLegKey({opdrachtgever: 'Emergo'})).toBe('');
     });
   });
 
