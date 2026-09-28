@@ -202,6 +202,11 @@ model TransportOrder {
   // so they don't collapse into one via the (emailMessageId, externalReference)
   // idempotency. Only set for such duplicate-reference legs; null otherwise.
   legKey                 String?
+  // Niek: during the conference a document (an attachment, or the original
+  // e-mail via the sentinel "email") can be excluded from THIS order's XML
+  // <documents> block without deleting the file — reversible, per order. Holds
+  // the attachment ids (or "email") to omit; empty = include everything.
+  excludedDocumentIds    String[]    @default([])
   sourceAttachmentId     String?     @db.Uuid
   rawOrderText           String?
   createdAt              DateTime    @default(now())

@@ -632,7 +632,15 @@ export class OrdersService {
     };
   }
 
-  async reprocess(id: string) {
+  /**
+   * Reprocess one order. Default (`fresh=false`) is NON-destructive: the AI only
+   * fills empty fields, so nothing already present is ever lost. `fresh=true`
+   * (Renato 2026-09-28) re-extracts with the CURRENT customer AI-instruction and
+   * OVERWRITES the AI-read fields, so an edited instruction visibly takes effect;
+   * values the customer supplied in a reply are absent from the original email,
+   * so a fresh extraction won't return them and they survive via the floor.
+   */
+  async reprocess(id: string, fresh = false) {
     const order = await this.prismaService.transportOrder.findUnique({
       where: { id },
       include: {
@@ -690,7 +698,7 @@ export class OrdersService {
       if (order.batchImportId && order.rawOrderText) {
         // Batch order: reprocess ONLY this order from its stored rawOrderText,
         // NON-destructively (the single re-fill preserves everything present).
-        await this.refillBatchOrder(order, existingFields);
+        await this.refillBatchOrder(order, existingFields, fresh);
         // Rebuild the ONE consolidated reply for the batch (also clears any
         // stale per-order drafts on sibling orders).
         await this.aiReplyService
@@ -700,7 +708,10 @@ export class OrdersService {
           entityType: 'TransportOrder',
           entityId: order.id,
           action: 'BATCH_ORDER_REPROCESSED',
-          detailsJson: { externalReference: order.externalReference },
+          detailsJson: {
+            externalReference: order.externalReference,
+            mode: fresh ? 'fresh_overwrite' : 'non_destructive_refill',
+          },
         });
         return;
       }
@@ -719,7 +730,7 @@ export class OrdersService {
         .filter((t) => t.length > 0)
         .join('\n\n');
 
-      await this.refillOrderFromText(order, existingFields, combinedText);
+      await this.refillOrderFromText(order, existingFields, combinedText, fresh);
 
       await this.auditLogService.log({
         entityType: 'TransportOrder',
@@ -727,7 +738,7 @@ export class OrdersService {
         action: 'ORDER_REPROCESSED',
         detailsJson: {
           emailMessageId: order.emailMessageId,
-          mode: 'non_destructive_refill',
+          mode: fresh ? 'fresh_overwrite' : 'non_destructive_refill',
           preservedFields: Object.keys(existingFields).length,
         } as any,
       });
@@ -789,6 +800,59 @@ export class OrdersService {
     return { deleted: true, id };
   }
 
+  /**
+   * Niek: include/exclude ONE document from THIS order's XML <documents> block
+   * during the conference, without deleting the file (reversible, per order).
+   * `documentId` is an attachment id, or the sentinel "email" for the original
+   * .eml. Validated against the order's own e-mail so no stray id is stored.
+   */
+  async setOrderDocumentExcluded(
+    orderId: string,
+    documentId: string,
+    excluded: boolean,
+  ) {
+    const order = await this.prismaService.transportOrder.findUnique({
+      where: { id: orderId },
+      select: {
+        id: true,
+        excludedDocumentIds: true,
+        emailMessage: {
+          select: { attachments: { select: { id: true } } },
+        },
+      },
+    });
+    if (!order) throw new NotFoundException(`Order not found: id=${orderId}`);
+
+    const validIds = new Set<string>([
+      'email',
+      ...(order.emailMessage?.attachments ?? []).map((a) => a.id),
+    ]);
+    if (!validIds.has(documentId)) {
+      throw new BadRequestException(
+        `Document not part of this order's e-mail: ${documentId}`,
+      );
+    }
+
+    const set = new Set(order.excludedDocumentIds ?? []);
+    if (excluded) set.add(documentId);
+    else set.delete(documentId);
+    const excludedDocumentIds = [...set];
+
+    await this.prismaService.transportOrder.update({
+      where: { id: orderId },
+      data: { excludedDocumentIds },
+    });
+
+    await this.auditLogService.log({
+      entityType: 'TransportOrder',
+      entityId: orderId,
+      action: excluded ? 'ORDER_DOCUMENT_EXCLUDED' : 'ORDER_DOCUMENT_INCLUDED',
+      detailsJson: { documentId } as any,
+    });
+
+    return { orderId, documentId, excluded, excludedDocumentIds };
+  }
+
   /** Re-fill a single batch order from its stored rawOrderText (no siblings). */
   private async refillBatchOrder(
     order: {
@@ -804,19 +868,25 @@ export class OrdersService {
       } | null;
     },
     existingFields: Record<string, string>,
+    fresh = false,
   ): Promise<void> {
     return this.refillOrderFromText(
       order,
       existingFields,
       order.rawOrderText ?? '',
+      fresh,
     );
   }
 
   /**
-   * Non-destructive re-fill of ONE order from the given source text: the AI only
-   * FILLS empty fields, existing values (incl. data merged from customer
-   * replies) are always kept, and the single write means a failed AI call can
-   * never gut the order. Shared by batch- and single-order reprocess.
+   * Re-fill of ONE order from the given source text. Default (`fresh=false`) is
+   * NON-destructive: the AI only FILLS empty fields, existing values (incl. data
+   * merged from customer replies) are always kept. `fresh=true` lets the AI's new
+   * reading OVERWRITE the fields it returns (so an edited customer AI-instruction
+   * takes visible effect); the existing values still act as a floor, so a field
+   * is never blanked and reply-supplied values (absent from the original email,
+   * hence not re-returned) survive. Either way the single write means a failed AI
+   * call can never gut the order. Shared by batch- and single-order reprocess.
    */
   private async refillOrderFromText(
     order: {
@@ -832,6 +902,7 @@ export class OrdersService {
     },
     existingFields: Record<string, string>,
     text: string,
+    fresh = false,
   ): Promise<void> {
     // #3 (Niek/Van Losser): resolve the client from the order's opdrachtgever
     // first (same as initial processing), so reprocessing an order AFTER its
@@ -896,12 +967,16 @@ export class OrdersService {
         : undefined) ?? returnedOrders[0];
     const aiFields = pickedOrder?.fields ?? {};
 
-    // Non-destructive merge: keep everything we already have; the AI only FILLS
-    // EMPTY fields (never overwrites). The client-profile preset is the only
-    // authoritative source. Single write -> a reprocess can add but never lose.
+    // Merge: keep everything we already have as a floor (a reprocess can add but
+    // never lose). Default reprocess only FILLS EMPTY fields; a `fresh` reprocess
+    // lets the AI's new reading OVERWRITE the fields it returns, so an edited
+    // customer AI-instruction visibly takes effect. Reply-supplied fields are
+    // absent from the original email, so the AI won't return them and they stay
+    // via the floor. The client-profile preset stays authoritative in both modes.
     const merged: Record<string, unknown> = { ...existingFields };
     for (const [k, v] of Object.entries(aiFields)) {
-      if (!merged[k] && v != null && v.toString().trim() !== '') merged[k] = v;
+      if (v == null || v.toString().trim() === '') continue;
+      if (fresh || !merged[k]) merged[k] = v;
     }
     Object.assign(merged, presetFields);
 

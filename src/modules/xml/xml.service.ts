@@ -194,6 +194,7 @@ export class XmlService {
           rawMimeFileName?: string | null;
           rawMimeMimeType?: string | null;
           attachments?: Array<{
+            id?: string;
             fileName: string;
             mimeType: string;
             contentBase64?: string | null;
@@ -210,8 +211,12 @@ export class XmlService {
       | undefined,
     reference?: string,
     documentTypeRules?: Partial<Record<DocumentTypeRuleCategory, string>> | null,
+    // Niek: documents the operator excluded from THIS order's XML (attachment
+    // ids, or the sentinel "email" for the original .eml). Reversible, per order.
+    excludedDocumentIds?: string[] | null,
   ) {
     if (!emailMessage) return;
+    const excluded = new Set(excludedDocumentIds ?? []);
     // TPE Standard structure (ArtSystems wiki): each <document> carries
     // <documenttype_id matchmode="0">, <filename>, <filedata> (base64),
     // <reference> and <concerns>. NOT <documenttype>/<mimetype>/<contentbase64>.
@@ -222,7 +227,7 @@ export class XmlService {
       concerns: string;
     }> = [];
 
-    if (emailMessage.rawMimeBase64?.trim()) {
+    if (emailMessage.rawMimeBase64?.trim() && !excluded.has('email')) {
       documentEntries.push({
         // 19 = EMAIL (the original .eml), per Rick/ArtSystems (2026-08-06).
         documentType: EMAIL_DOCUMENT_TYPE,
@@ -237,6 +242,8 @@ export class XmlService {
 
     for (const attachment of emailMessage.attachments ?? []) {
       if (!this.isSupportedOriginalAttachment(attachment)) continue;
+      // Niek: operator excluded this document from the order's XML during review.
+      if (attachment.id && excluded.has(attachment.id)) continue;
 
       // A per-profile file-type rule (Sander) wins; otherwise fall back to the
       // AI-derived purpose (86/87/91) or the 92 default (Niek #6).
@@ -413,6 +420,7 @@ export class XmlService {
           include: {
             attachments: {
               select: {
+                id: true,
                 fileName: true,
                 mimeType: true,
                 contentBase64: true,
@@ -943,6 +951,7 @@ export class XmlService {
         order.emailMessage,
         shipmentReference || bookingReference,
         documentTypeRules,
+        order.excludedDocumentIds,
       );
     }
 

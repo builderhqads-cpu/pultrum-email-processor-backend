@@ -60,6 +60,15 @@ export class OrdersController {
     return this.ordersService.reprocess(id);
   }
 
+  // Renato 2026-09-28: fresh reprocess — re-extract with the CURRENT customer
+  // AI-instruction and OVERWRITE the AI-read fields, so an edited instruction
+  // visibly takes effect. Separate route so it's an explicit, deliberate action.
+  @Post(':id/reprocess-fresh')
+  @UseGuards(JwtAuthGuard)
+  reprocessFresh(@Param('id') id: string) {
+    return this.ordersService.reprocess(id, true);
+  }
+
   // Renato 2026-09-21: delete a single order so the planner can quickly clear
   // wrongly-processed orders and reprocess the email without stale rows piling up.
   @Delete(':id')
@@ -72,6 +81,22 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard)
   sendXml(@Param('id') id: string) {
     return this.ordersService.sendXml(id);
+  }
+
+  // Niek: include/exclude one document (attachment id, or "email" for the .eml)
+  // from THIS order's XML during the conference — reversible, without deleting.
+  @Put(':id/documents/:documentId')
+  @UseGuards(JwtAuthGuard)
+  setDocumentExcluded(
+    @Param('id') id: string,
+    @Param('documentId') documentId: string,
+    @Body() body: { excluded?: boolean },
+  ) {
+    return this.ordersService.setOrderDocumentExcluded(
+      id,
+      documentId,
+      Boolean(body?.excluded),
+    );
   }
 
   // Niek 2026-09-11: force send — deliver even with required fields missing
