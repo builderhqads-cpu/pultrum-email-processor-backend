@@ -3,10 +3,13 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
+  attachmentTypeCategory,
   concernsForDocumentType,
   EMAIL_DOCUMENT_TYPE,
+  isXmlAttachmentCategoryEnabled,
   isXmlDocumentAttachment,
   normalizeDocumentTypeRules,
+  normalizeXmlAttachmentCategories,
   resolveAttachmentDocumentType,
   xmlDocumentsEnabled,
 } from '../../utils/xml-documents';
@@ -161,9 +164,9 @@ export class EmailsService {
     )
       .trim()
       .toLowerCase();
-    const documentTypeRules = customerEmail
+    const { documentTypeRules, xmlAttachmentCategories } = customerEmail
       ? await this.resolveDocumentTypeRules(customerEmail)
-      : {};
+      : { documentTypeRules: {}, xmlAttachmentCategories: {} };
 
     // Each document that will be embedded in the <documents> block, with its
     // resolved documenttype — the original e-mail first (type 19), then every
@@ -198,7 +201,13 @@ export class EmailsService {
       classifiedAt: email.classifiedAt,
       mailbox: email.mailbox,
       attachments: email.attachments.map((att) => {
-        const includedInXml = docsEnabled && isXmlDocumentAttachment(att);
+        const includedInXml =
+          docsEnabled &&
+          isXmlDocumentAttachment(att) &&
+          isXmlAttachmentCategoryEnabled(
+            attachmentTypeCategory(att.fileName, att.mimeType),
+            xmlAttachmentCategories,
+          );
         const documentType = includedInXml
           ? resolveAttachmentDocumentType({
               fileName: att.fileName,
@@ -258,15 +267,22 @@ export class EmailsService {
    */
   private async resolveDocumentTypeRules(customerEmail?: string | null) {
     const email = (customerEmail || '').trim().toLowerCase();
-    if (!email) return {};
+    if (!email) {
+      return { documentTypeRules: {}, xmlAttachmentCategories: {} };
+    }
     const profile = await this.prismaService.customerProfile.findFirst({
       where: {
         active: true,
         OR: [{ contactEmail: email }, { emails: { some: { email } } }],
       },
-      select: { documentTypeRules: true },
+      select: { documentTypeRules: true, xmlAttachmentCategories: true },
     });
-    return normalizeDocumentTypeRules(profile?.documentTypeRules);
+    return {
+      documentTypeRules: normalizeDocumentTypeRules(profile?.documentTypeRules),
+      xmlAttachmentCategories: normalizeXmlAttachmentCategories(
+        profile?.xmlAttachmentCategories,
+      ),
+    };
   }
 
   /** Rebuild the email as received (HTML + embedded signature images). */

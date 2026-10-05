@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   Put,
   UseGuards,
@@ -81,6 +82,17 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard)
   sendXml(@Param('id') id: string) {
     return this.ordersService.sendXml(id);
+  }
+
+  // Renato 2026-10-05 (QoL): manually correct one field value in the portal.
+  @Patch(':id/fields/:key')
+  @UseGuards(JwtAuthGuard)
+  updateField(
+    @Param('id') id: string,
+    @Param('key') key: string,
+    @Body() body: { value?: string },
+  ) {
+    return this.ordersService.updateOrderFieldValue(id, key, body?.value ?? '');
   }
 
   // Niek: include/exclude one document (attachment id, or "email" for the .eml)

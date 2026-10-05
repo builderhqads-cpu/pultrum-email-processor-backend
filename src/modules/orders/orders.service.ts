@@ -12,11 +12,15 @@ import { PrismaService } from '../../prisma/prisma.service';
 import {
   CustomerReplyDraftStatus,
   Department,
+  FieldRequirement,
   OrderFieldSource,
   OrderStatus,
 } from '@prisma/client';
 import { ClientProfileService } from '../client-profiles/client-profile.service';
-import { TRANSPORT_BOOKING_FIELD_RULES } from '../required-fields/transport-booking-field-rules';
+import {
+  getRuleRequirement,
+  TRANSPORT_BOOKING_FIELD_RULES,
+} from '../required-fields/transport-booking-field-rules';
 import {
   applyInvoiceRefTrFallback,
   routeTimeBounds,
@@ -851,6 +855,99 @@ export class OrdersService {
     });
 
     return { orderId, documentId, excluded, excludedDocumentIds };
+  }
+
+  /**
+   * Renato 2026-10-05 (QoL): manually correct ONE field value in the portal. The
+   * value is stored with source=MANUAL (confidence 1.0). When the new value is
+   * non-empty and the field was flagged missing, it is removed from the missing
+   * list so the order is no longer blocked on it. Deliberately does NOT re-run
+   * the whole validation — it never recomputes derived fields nor downgrades a
+   * sent order's status. For a full re-extraction, use "reprocess (fresh)".
+   */
+  async updateOrderFieldValue(orderId: string, key: string, rawValue: string) {
+    const cleanKey = (key ?? '').toString().trim();
+    const rule = TRANSPORT_BOOKING_FIELD_RULES.find((r) => r.key === cleanKey);
+    if (!rule) {
+      throw new BadRequestException(`Unknown order field: ${cleanKey}`);
+    }
+
+    const order = await this.prismaService.transportOrder.findUnique({
+      where: { id: orderId },
+      select: { id: true },
+    });
+    if (!order) throw new NotFoundException(`Order not found: id=${orderId}`);
+
+    const value = (rawValue ?? '').toString().trim();
+    const requirement = getRuleRequirement(rule);
+    const required = requirement === FieldRequirement.REQUIRED;
+    const missing =
+      !value &&
+      (requirement === FieldRequirement.REQUIRED ||
+        requirement === FieldRequirement.RECOMMENDED);
+
+    await this.prismaService.$transaction(async (tx) => {
+      await tx.orderField.upsert({
+        where: { orderId_key: { orderId, key: cleanKey } },
+        create: {
+          orderId,
+          key: cleanKey,
+          label: rule.label,
+          value: value || null,
+          source: OrderFieldSource.MANUAL,
+          required,
+          requirement,
+          missing,
+          confidence: 1.0,
+        },
+        update: {
+          value: value || null,
+          source: OrderFieldSource.MANUAL,
+          missing,
+          confidence: 1.0,
+        },
+      });
+      // Keep the "Missing fields" panel in sync. A filled field is removed from
+      // BOTH lists; a CLEARED field is restored to the right one (required ->
+      // MissingField, recommended -> ValidationWarning) so it shows as missing
+      // again. (Optional fields rely on the OrderField.missing flag above.)
+      await tx.missingField.deleteMany({ where: { orderId, key: cleanKey } });
+      await tx.validationWarning.deleteMany({
+        where: { orderId, key: cleanKey },
+      });
+      if (!value) {
+        if (requirement === FieldRequirement.REQUIRED) {
+          await tx.missingField.create({
+            data: {
+              orderId,
+              key: cleanKey,
+              label: rule.label,
+              requirement,
+              reason: 'Manually cleared',
+            },
+          });
+        } else if (requirement === FieldRequirement.RECOMMENDED) {
+          await tx.validationWarning.create({
+            data: {
+              orderId,
+              key: cleanKey,
+              label: rule.label,
+              requirement,
+              reason: 'Manually cleared',
+            },
+          });
+        }
+      }
+    });
+
+    await this.auditLogService.log({
+      entityType: 'TransportOrder',
+      entityId: orderId,
+      action: 'ORDER_FIELD_EDITED',
+      detailsJson: { key: cleanKey, value } as any,
+    });
+
+    return { orderId, key: cleanKey, value };
   }
 
   /** Re-fill a single batch order from its stored rawOrderText (no siblings). */

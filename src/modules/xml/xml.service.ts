@@ -8,11 +8,14 @@ import {
 } from '@prisma/client';
 import { OrderFieldSource } from '@prisma/client';
 import {
+  attachmentTypeCategory,
   concernsForDocumentType,
   DocumentTypeRuleCategory,
   EMAIL_DOCUMENT_TYPE,
+  isXmlAttachmentCategoryEnabled,
   isXmlDocumentAttachment,
   normalizeDocumentTypeRules,
+  normalizeXmlAttachmentCategories,
   resolveAttachmentDocumentType,
   xmlDocumentsEnabled,
 } from '../../utils/xml-documents';
@@ -214,6 +217,9 @@ export class XmlService {
     // Niek: documents the operator excluded from THIS order's XML (attachment
     // ids, or the sentinel "email" for the original .eml). Reversible, per order.
     excludedDocumentIds?: string[] | null,
+    // Renato 2026-10-05: per-customer attachment-type switches. A category set to
+    // false is omitted from the XML. Never affects the original e-mail (.eml).
+    attachmentCategories?: Partial<Record<DocumentTypeRuleCategory, boolean>> | null,
   ) {
     if (!emailMessage) return;
     const excluded = new Set(excludedDocumentIds ?? []);
@@ -244,6 +250,14 @@ export class XmlService {
       if (!this.isSupportedOriginalAttachment(attachment)) continue;
       // Niek: operator excluded this document from the order's XML during review.
       if (attachment.id && excluded.has(attachment.id)) continue;
+      // Renato 2026-10-05: customer turned this attachment type off in the profile.
+      if (
+        !isXmlAttachmentCategoryEnabled(
+          attachmentTypeCategory(attachment.fileName, attachment.mimeType),
+          attachmentCategories,
+        )
+      )
+        continue;
 
       // A per-profile file-type rule (Sander) wins; otherwise fall back to the
       // AI-derived purpose (86/87/91) or the 92 default (Niek #6).
@@ -290,16 +304,36 @@ export class XmlService {
   private async resolveDocumentTypeRules(
     customerEmail?: string | null,
   ): Promise<Partial<Record<DocumentTypeRuleCategory, string>>> {
+    return (await this.resolveProfileDocumentConfig(customerEmail))
+      .documentTypeRules;
+  }
+
+  /**
+   * Per-profile XML document config for the order's customer (one DB query):
+   * the documenttype rules (Sander) AND the attachment-type switches (Renato
+   * 2026-10-05: which attachment file types go in the XML). {} / {} when there
+   * is no profile — so the builder keeps the previous behaviour (AI mapping +
+   * all attachment types included).
+   */
+  private async resolveProfileDocumentConfig(customerEmail?: string | null): Promise<{
+    documentTypeRules: Partial<Record<DocumentTypeRuleCategory, string>>;
+    xmlAttachmentCategories: Partial<Record<DocumentTypeRuleCategory, boolean>>;
+  }> {
     const email = (customerEmail || '').trim().toLowerCase();
-    if (!email) return {};
+    if (!email) return { documentTypeRules: {}, xmlAttachmentCategories: {} };
     const profile = await this.prismaService.customerProfile.findFirst({
       where: {
         active: true,
         OR: [{ contactEmail: email }, { emails: { some: { email } } }],
       },
-      select: { documentTypeRules: true },
+      select: { documentTypeRules: true, xmlAttachmentCategories: true },
     });
-    return normalizeDocumentTypeRules(profile?.documentTypeRules);
+    return {
+      documentTypeRules: normalizeDocumentTypeRules(profile?.documentTypeRules),
+      xmlAttachmentCategories: normalizeXmlAttachmentCategories(
+        profile?.xmlAttachmentCategories,
+      ),
+    };
   }
 
   private async upsertOrderField(params: {
@@ -745,12 +779,6 @@ export class XmlService {
       .ele('customer_id', { matchmode: '1' })
       .txt(customerId)
       .up()
-      // Rick/ArtSystems (2026-09-15): the agreed price is imported only from
-      // <fixedprice> here at the transportbooking level (no matchmode). Emitted
-      // even when empty, like the other booking-header fields.
-      .ele('fixedprice')
-      .txt(fixedPrice)
-      .up()
       .ele('shipments')
       .ele('shipment')
       .ele('edireference')
@@ -772,6 +800,11 @@ export class XmlService {
       .ele('planningnote')
       .txt(this.getFieldValue(fieldMap, 'planning_note'))
       .up();
+    // Rick/ArtSystems (2026-10-05): the agreed price moved from the transportbooking
+    // level to the SHIPMENT level (after planningnote) — the booking-level price was
+    // breaking their invoicing. No matchmode; emitted even when empty, like the
+    // other shipment-header fields.
+    doc.ele('fixedprice').txt(fixedPrice).up();
 
     // pickupaddress
     const pickup = doc.ele('pickupaddress');
@@ -921,8 +954,8 @@ export class XmlService {
     cargo.ele('width').txt(blankIfZero(width)).up();
     cargo.ele('height').txt(blankIfZero(height)).up();
     // NOTE: the fixed price is NOT emitted here. It goes to <fixedprice> at the
-    // transportbooking level (Rick/ArtSystems 2026-09-15) — Transpas does not
-    // import a price on the cargo line.
+    // SHIPMENT level (Rick/ArtSystems 2026-10-05, moved from the transportbooking
+    // level) — Transpas does not import a price on the cargo line.
 
     const goodslines = cargo.ele('goodslines').ele('goodsline');
     goodslines.ele('unitamount').txt(normalizeQuantity(goodsUnitAmount)).up();
@@ -943,15 +976,15 @@ export class XmlService {
     goodslines.up().up().up(); // goodsline -> goodslines -> cargo
 
     if (this.shouldIncludeOriginalDocuments()) {
-      const documentTypeRules = await this.resolveDocumentTypeRules(
-        order.customerEmail,
-      );
+      const { documentTypeRules, xmlAttachmentCategories } =
+        await this.resolveProfileDocumentConfig(order.customerEmail);
       this.appendOriginalDocuments(
         doc,
         order.emailMessage,
         shipmentReference || bookingReference,
         documentTypeRules,
         order.excludedDocumentIds,
+        xmlAttachmentCategories,
       );
     }
 

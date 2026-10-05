@@ -258,6 +258,39 @@ export function normalizeDocumentTypeRules(
 }
 
 /**
+ * Renato 2026-10-05: per-profile switches for which ATTACHMENT file-type
+ * categories are embedded in the XML `<documents>` block. Parsed from the JSON
+ * stored on the customer profile. Keeps only known categories with a boolean
+ * value; everything else is dropped. {} (absent/malformed) means "all included"
+ * — the default and the previous behaviour. NEVER affects the original e-mail.
+ */
+export function normalizeXmlAttachmentCategories(
+  raw: unknown,
+): Partial<Record<DocumentTypeRuleCategory, boolean>> {
+  const out: Partial<Record<DocumentTypeRuleCategory, boolean>> = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const category of DOCUMENT_TYPE_RULE_CATEGORIES) {
+    const value = (raw as Record<string, unknown>)[category];
+    if (typeof value === 'boolean') out[category] = value;
+  }
+  return out;
+}
+
+/**
+ * Whether an attachment of the given file-type category is embedded in the XML,
+ * per the profile's switches. A category is excluded ONLY when it is explicitly
+ * set to false; absent/true (and an uncategorized attachment) = included. So the
+ * default (no config) includes everything, exactly as before.
+ */
+export function isXmlAttachmentCategoryEnabled(
+  category: DocumentTypeRuleCategory | null,
+  config?: Partial<Record<DocumentTypeRuleCategory, boolean>> | null,
+): boolean {
+  if (!category || !config) return true;
+  return config[category] !== false;
+}
+
+/**
  * Final Transpas documenttype for an attachment: a matching per-profile rule
  * wins (Sander's file-type pin), otherwise the AI-derived purpose mapping
  * (86/87/91) or the 92 default. This is the single source of truth used by the

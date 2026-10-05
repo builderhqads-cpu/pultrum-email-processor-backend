@@ -11,6 +11,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import {
   DocumentTypeRuleCategory,
   normalizeDocumentTypeRules,
+  normalizeXmlAttachmentCategories,
 } from '../../utils/xml-documents';
 import {
   getRuleRequirement,
@@ -32,7 +33,8 @@ type CustomerProfileFieldInput = {
 
 type CustomerProfileMutationInput = {
   name: string;
-  contactEmail: string;
+  /** Renato 2026-10-05: optional — a profile can be created with only a name. */
+  contactEmail: string | null;
   additionalContactEmails: string[];
   active: boolean;
   notes: string | null;
@@ -44,6 +46,14 @@ type CustomerProfileMutationInput = {
    * (pdf/word/excel/image) for this customer, overriding the AI. null = clear.
    */
   documentTypeRules: Partial<Record<DocumentTypeRuleCategory, string>> | null;
+  /**
+   * Renato 2026-10-05: per-customer switches for which ATTACHMENT file types are
+   * embedded in the XML. Absent category = included (default = all on). The
+   * original e-mail (.eml) is always sent and never affected. null = clear.
+   */
+  xmlAttachmentCategories: Partial<
+    Record<DocumentTypeRuleCategory, boolean>
+  > | null;
   /**
    * Niek/Derix: fill an empty invoice_reference with the order's TR number.
    * Per-customer; off by default.
@@ -440,6 +450,9 @@ export class ClientProfileService implements OnModuleInit {
           ...(input.documentTypeRules
             ? { documentTypeRules: input.documentTypeRules }
             : {}),
+          ...(input.xmlAttachmentCategories
+            ? { xmlAttachmentCategories: input.xmlAttachmentCategories }
+            : {}),
         },
       });
 
@@ -494,7 +507,12 @@ export class ClientProfileService implements OnModuleInit {
       throw new NotFoundException(`Customer profile not found: id=${id}`);
     }
 
-    const nextPrimaryEmail = input.contactEmail ?? existing.contactEmail;
+    // Renato 2026-10-05: distinguish "clear" (contactEmail === null) from
+    // "unchanged" (undefined) — `??` would wrongly keep the old e-mail on clear.
+    const nextPrimaryEmail =
+      input.contactEmail !== undefined
+        ? input.contactEmail
+        : existing.contactEmail;
     const nextAdditionalEmails = [
       ...new Set(
         (input.additionalContactEmails ?? existing.emails.map((entry) => entry.email)).filter(
@@ -528,6 +546,12 @@ export class ClientProfileService implements OnModuleInit {
             ? {
                 documentTypeRules:
                   input.documentTypeRules ?? Prisma.DbNull,
+              }
+            : {}),
+          ...(input.xmlAttachmentCategories !== undefined
+            ? {
+                xmlAttachmentCategories:
+                  input.xmlAttachmentCategories ?? Prisma.DbNull,
               }
             : {}),
         },
@@ -632,11 +656,17 @@ export class ClientProfileService implements OnModuleInit {
       name: profile.name,
       contactEmail: profile.contactEmail,
       additionalContactEmails: profile.emails.map((entry) => entry.email),
-      contactEmails: [profile.contactEmail, ...profile.emails.map((entry) => entry.email)],
+      contactEmails: [
+        profile.contactEmail,
+        ...profile.emails.map((entry) => entry.email),
+      ].filter((e): e is string => Boolean(e)),
       active: profile.active,
       notes: profile.notes,
       aiInstructions: profile.aiInstructions ?? '',
       documentTypeRules: normalizeDocumentTypeRules(profile.documentTypeRules),
+      xmlAttachmentCategories: normalizeXmlAttachmentCategories(
+        profile.xmlAttachmentCategories,
+      ),
       invoiceReferenceFallbackToTr: profile.invoiceReferenceFallbackToTr,
       createdAt: profile.createdAt,
       updatedAt: profile.updatedAt,
@@ -669,31 +699,29 @@ export class ClientProfileService implements OnModuleInit {
     aiInstructions?: unknown;
     fields?: unknown;
     documentTypeRules?: unknown;
+    xmlAttachmentCategories?: unknown;
     invoiceReferenceFallbackToTr?: unknown;
   }): CustomerProfileMutationInput {
     if (typeof input.name !== 'string' || !input.name.trim()) {
       throw new BadRequestException('Customer profile name is required.');
     }
-    if (
-      typeof input.contactEmail !== 'string' ||
-      !input.contactEmail.trim()
-    ) {
-      throw new BadRequestException(
-        'Customer profile contact email is required.',
-      );
-    }
 
-    const contactEmail = normalizeEmail(input.contactEmail);
-    const isValidEmail = EMAIL_FORMAT_RE.test(contactEmail);
-    if (!isValidEmail) {
-      throw new BadRequestException(
-        'Customer profile contact email is invalid.',
-      );
+    // Renato 2026-10-05: contact e-mail is OPTIONAL — a profile can be created
+    // with only a name (matched by opdrachtgever/content). When present it must
+    // be a valid e-mail; when absent/empty it is stored as null.
+    let contactEmail: string | null = null;
+    if (typeof input.contactEmail === 'string' && input.contactEmail.trim()) {
+      contactEmail = normalizeEmail(input.contactEmail);
+      if (!EMAIL_FORMAT_RE.test(contactEmail)) {
+        throw new BadRequestException(
+          'Customer profile contact email is invalid.',
+        );
+      }
     }
 
     const additionalContactEmails = this.normalizeAdditionalContactEmails(
       input.additionalContactEmails,
-      contactEmail,
+      contactEmail ?? undefined,
     );
 
     if (input.active !== undefined && typeof input.active !== 'boolean') {
@@ -732,6 +760,10 @@ export class ClientProfileService implements OnModuleInit {
       input.documentTypeRules,
     );
 
+    const xmlAttachmentCategories = normalizeXmlAttachmentCategories(
+      input.xmlAttachmentCategories,
+    );
+
     if (
       input.invoiceReferenceFallbackToTr !== undefined &&
       typeof input.invoiceReferenceFallbackToTr !== 'boolean'
@@ -752,6 +784,9 @@ export class ClientProfileService implements OnModuleInit {
       documentTypeRules: Object.keys(documentTypeRules).length
         ? documentTypeRules
         : null,
+      xmlAttachmentCategories: Object.keys(xmlAttachmentCategories).length
+        ? xmlAttachmentCategories
+        : null,
       invoiceReferenceFallbackToTr:
         input.invoiceReferenceFallbackToTr === true,
     };
@@ -766,6 +801,7 @@ export class ClientProfileService implements OnModuleInit {
     aiInstructions?: unknown;
     fields?: unknown;
     documentTypeRules?: unknown;
+    xmlAttachmentCategories?: unknown;
     invoiceReferenceFallbackToTr?: unknown;
   }) {
     const out: Partial<CustomerProfileMutationInput> = {};
@@ -778,22 +814,24 @@ export class ClientProfileService implements OnModuleInit {
     }
 
     if (input.contactEmail !== undefined) {
-      if (
-        typeof input.contactEmail !== 'string' ||
-        !input.contactEmail.trim()
-      ) {
+      // Renato 2026-10-05: an empty/null contact e-mail CLEARS it (the profile is
+      // then matched by name/opdrachtgever). A non-empty value must be valid.
+      const raw = input.contactEmail;
+      if (typeof raw === 'string' && raw.trim()) {
+        const contactEmail = normalizeEmail(raw);
+        if (!EMAIL_FORMAT_RE.test(contactEmail)) {
+          throw new BadRequestException(
+            'Customer profile contact email is invalid.',
+          );
+        }
+        out.contactEmail = contactEmail;
+      } else if (raw === null || (typeof raw === 'string' && !raw.trim())) {
+        out.contactEmail = null;
+      } else {
         throw new BadRequestException(
           'Customer profile contact email is invalid.',
         );
       }
-      const contactEmail = normalizeEmail(input.contactEmail);
-      const isValidEmail = EMAIL_FORMAT_RE.test(contactEmail);
-      if (!isValidEmail) {
-        throw new BadRequestException(
-          'Customer profile contact email is invalid.',
-        );
-      }
-      out.contactEmail = contactEmail;
     }
 
     if (input.additionalContactEmails !== undefined) {
@@ -855,6 +893,13 @@ export class ClientProfileService implements OnModuleInit {
       out.documentTypeRules = Object.keys(rules).length ? rules : null;
     }
 
+    if (input.xmlAttachmentCategories !== undefined) {
+      const cats = normalizeXmlAttachmentCategories(
+        input.xmlAttachmentCategories,
+      );
+      out.xmlAttachmentCategories = Object.keys(cats).length ? cats : null;
+    }
+
     if (input.invoiceReferenceFallbackToTr !== undefined) {
       if (typeof input.invoiceReferenceFallbackToTr !== 'boolean') {
         throw new BadRequestException(
@@ -914,14 +959,20 @@ export class ClientProfileService implements OnModuleInit {
   }
 
   private async assertEmailsAvailable(
-    emails: string[],
+    emails: Array<string | null | undefined>,
     excludeProfileId: string | null,
   ) {
-    const uniqueEmails = [...new Set(emails.map(normalizeEmail).filter(Boolean))];
+    const uniqueEmails = [
+      ...new Set(
+        emails
+          .filter((e): e is string => typeof e === 'string' && !!e.trim())
+          .map(normalizeEmail),
+      ),
+    ];
+    // Renato 2026-10-05: zero e-mails is now ALLOWED — a profile can be created
+    // with only a name (matched by opdrachtgever/content). Nothing to check then.
     if (!uniqueEmails.length) {
-      throw new BadRequestException(
-        'At least one customer profile email is required.',
-      );
+      return;
     }
 
     const primaryConflicts = await this.prismaService!.customerProfile.findMany({

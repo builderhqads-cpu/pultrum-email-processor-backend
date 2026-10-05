@@ -161,4 +161,55 @@ describe('ClientProfileService', () => {
     // Both normalize to "ACME BV" -> ambiguous -> unresolved (never a wrong customer_id).
     expect(svc.resolveByOpdrachtgever('ACME B.V.')).toBeNull();
   });
+
+  // --- Holcon / Durison (Niek 2026-10): two customers from ONE mailbox, told
+  // apart ONLY by the loading place (loading in Raalte = Durison). These tests
+  // REPRODUCE the current gap — there is no pickup-location matching, so every
+  // order resolves to the single e-mail-matched profile. When we add loading-
+  // place matching, the last expectation flips from 'holcon' to 'durison'.
+  describe('Holcon / Durison — same mailbox, distinguished by loading place', () => {
+    // The shared address lives on ONE profile (the system blocks the same e-mail
+    // on two profiles). Durison carries a placeholder address it never uses.
+    const holconDurison = () =>
+      withProfiles([
+        {
+          id: 'holcon',
+          name: 'Holcon',
+          match: { emails: ['j.geerets@holcon.com'], domains: [] },
+          fixedFields: { customer_id: 'HOLCON' },
+        },
+        {
+          id: 'durison',
+          name: 'Durison',
+          match: { emails: ['placeholder.durison@local.invalid'], domains: [] },
+          fixedFields: { customer_id: 'DURISON' },
+        },
+      ]);
+
+    it('by sender, every order from the shared mailbox lands on the one email-matched profile (Holcon)', () => {
+      const svc = holconDurison();
+      expect(svc.resolve({ fromEmail: 'j.geerets@holcon.com' })?.id).toBe('holcon');
+    });
+
+    it('the company name is NOT in these orders, so opdrachtgever resolution cannot pick Durison', () => {
+      const svc = holconDurison();
+      expect(svc.resolveByOpdrachtgever('')).toBeNull();
+      expect(svc.resolveByOpdrachtgever(null)).toBeNull();
+    });
+
+    it('BUG: a Durison order (loads in Raalte) still resolves to Holcon — no loading-place matching yet', () => {
+      const svc = holconDurison();
+      // Mirror the processor: resolveByOpdrachtgever(opdrachtgever) ?? resolve(sender/text).
+      const opdrachtgever = ''; // not present anywhere in the order
+      const resolved =
+        svc.resolveByOpdrachtgever(opdrachtgever) ??
+        svc.resolve({
+          fromEmail: 'j.geerets@holcon.com',
+          text: 'Laadplaats: Raalte\nLosplaats: Zwolle\nTransportsoort: kraan',
+        });
+      // It SHOULD be Durison (loads in Raalte), but today it is Holcon. This
+      // documents the gap; it becomes 'durison' once loading-place matching lands.
+      expect(resolved?.id).toBe('holcon');
+    });
+  });
 });

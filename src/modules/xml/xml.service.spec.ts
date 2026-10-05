@@ -463,7 +463,7 @@ describe('XmlService generateOrderXml normalization', () => {
     }
   });
 
-  it('emits the extracted fixed_price into transportbooking/fixedprice (Rick)', async () => {
+  it('emits the extracted fixed_price into shipment/fixedprice (Rick)', async () => {
     const prisma = {
       transportOrder: {
         findUnique: jest.fn().mockResolvedValue({
@@ -487,7 +487,7 @@ describe('XmlService generateOrderXml normalization', () => {
             { key: 'delivery_country', value: 'NL' },
             { key: 'cargo_unit_amount', value: '1' },
             { key: 'cargo_unit_id', value: 'Bundel' },
-            // Portal "Fixed price 640" -> transportbooking/fixedprice.
+            // Portal "Fixed price 640" -> shipment/fixedprice.
             { key: 'fixed_price', value: '€ 640,00' },
           ],
           emailMessage: { subject: 'Collection Note Report', attachments: [] },
@@ -505,8 +505,12 @@ describe('XmlService generateOrderXml normalization', () => {
     const xml = await service.generateOrderXml('order-fp');
 
     // Currency stripped, decimal notation normalized, zero cents dropped.
-    // Booking-level <fixedprice>, and NOT a cargo-line <price> (Rick/ArtSystems).
+    // Shipment-level <fixedprice> (Rick 2026-10-05: moved from transportbooking),
+    // after <planningnote> and before <pickupaddress>, and NOT a cargo-line <price>.
     expect(xml).toContain('<fixedprice>640</fixedprice>');
+    expect(xml).toMatch(
+      /<planningnote\/>\s*<fixedprice>640<\/fixedprice>\s*<pickupaddress>/,
+    );
     expect(xml).not.toContain('<price>640');
   });
 

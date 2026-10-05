@@ -306,12 +306,17 @@ enum OrderFieldSource {
   CUSTOMER_PROFILE
   GENERATED
   CALCULATED
+  // Renato 2026-10-05: value corrected by hand in the portal (manual override).
+  MANUAL
 }
 
 model CustomerProfile {
   id           String                @id @default(uuid()) @db.Uuid
   name         String
-  contactEmail String                @unique
+  /// Optional (Renato 2026-10-05): a profile can be created with only a name and
+  /// be matched purely by opdrachtgever/content (e.g. Durison/Holcon on one
+  /// mailbox). @unique still holds — Postgres allows multiple NULLs.
+  contactEmail String?               @unique
   active       Boolean               @default(true)
   notes        String?
   /// Free-text guidance for the AI on how THIS customer builds their documents
@@ -323,6 +328,12 @@ model CustomerProfile {
   /// { "pdf": "91", "word": "92", "excel": "87", "image": "92" } — only the
   /// set categories are present. Read by the XML builder when embedding docs.
   documentTypeRules Json?
+  /// Renato 2026-10-05: per-customer switches for which ATTACHMENT file types are
+  /// embedded in the XML <documents> block. Shape:
+  /// { "pdf": true, "word": false, "excel": true, "image": false } — only the set
+  /// categories are present; absent category = included (default = all on). The
+  /// original e-mail (.eml, documenttype 19) is ALWAYS sent and is NOT affected.
+  xmlAttachmentCategories Json?
   /// Niek/Derix (2026-09-16): when true, an empty invoice_reference is filled
   /// deterministically with the order's TR number. Per-customer; off by default.
   invoiceReferenceFallbackToTr Boolean @default(false)

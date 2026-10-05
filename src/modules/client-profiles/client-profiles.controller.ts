@@ -20,6 +20,7 @@ type CustomerProfilePayload = {
   fields?: unknown;
   aiInstructions?: unknown;
   documentTypeRules?: unknown;
+  xmlAttachmentCategories?: unknown;
   invoiceReferenceFallbackToTr?: unknown;
 };
 
