@@ -11,7 +11,7 @@ const dayFmt = new Intl.DateTimeFormat('en-CA', {
   day: '2-digit',
 });
 
-export type GroupBy = 'day' | 'customer' | 'day_customer';
+export type GroupBy = 'day' | 'customer' | 'model' | 'day_customer';
 
 type Bucket = {
   calls: number;
@@ -20,6 +20,7 @@ type Bucket = {
   costUsd: number;
   tokens: number;
   emails: Set<string>;
+  models: Map<string, number>;
 };
 
 function emptyBucket(): Bucket {
@@ -30,7 +31,21 @@ function emptyBucket(): Bucket {
     costUsd: 0,
     tokens: 0,
     emails: new Set<string>(),
+    models: new Map<string, number>(),
   };
+}
+
+// Most-used model in a bucket (so a customer/day row can show "which model").
+function topModel(models: Map<string, number>): string {
+  let best = '';
+  let bestN = -1;
+  for (const [m, n] of models) {
+    if (n > bestN) {
+      best = m;
+      bestN = n;
+    }
+  }
+  return best || '(desconhecido)';
 }
 
 const round = (n: number, d = 6) => {
@@ -82,6 +97,7 @@ export class AuditReportsService {
         costUsd: true,
         totalTokens: true,
         emailMessageId: true,
+        model: true,
       },
     });
 
@@ -142,6 +158,7 @@ export class AuditReportsService {
     for (const c of calls) {
       const day = dayFmt.format(c.createdAt);
       const customer = customerFor(c.emailMessageId);
+      const model = c.model || '(desconhecido)';
       allCustomers.add(customer);
 
       const key =
@@ -149,7 +166,9 @@ export class AuditReportsService {
           ? day
           : groupBy === 'customer'
             ? customer
-            : `${day}\u0000${customer}`;
+            : groupBy === 'model'
+              ? model
+              : `${day}\u0000${customer}`;
 
       for (const b of [bucket(key), totals]) {
         b.calls += 1;
@@ -158,6 +177,7 @@ export class AuditReportsService {
         if (typeof c.costUsd === 'number') b.costUsd += c.costUsd;
         if (typeof c.totalTokens === 'number') b.tokens += c.totalTokens;
         if (c.emailMessageId) b.emails.add(c.emailMessageId);
+        b.models.set(model, (b.models.get(model) ?? 0) + 1);
       }
     }
 
@@ -171,9 +191,11 @@ export class AuditReportsService {
           costUsd: round(b.costUsd),
           tokens: b.tokens,
           avgCostPerEmail: b.emails.size ? round(b.costUsd / b.emails.size) : 0,
+          model: topModel(b.models),
         };
         if (groupBy === 'day') return { date: key, ...base };
         if (groupBy === 'customer') return { customer: key, ...base };
+        if (groupBy === 'model') return base; // base.model already = this group
         const [date, customer] = key.split('\u0000');
         return { date, customer, ...base };
       })
@@ -208,12 +230,15 @@ export class AuditReportsService {
   /** Same data as CSV (Excel-friendly: semicolon separator, CRLF). */
   toCsv(result: Awaited<ReturnType<AuditReportsService['emailStats']>>): string {
     const {groupBy, rows} = result;
+    const metricCols = ['emails', 'calls', 'succeeded', 'failed', 'costUsd', 'avgCostPerEmail', 'tokens', 'model'];
     const headers =
       groupBy === 'day'
-        ? ['date', 'emails', 'calls', 'succeeded', 'failed', 'costUsd', 'avgCostPerEmail', 'tokens']
+        ? ['date', ...metricCols]
         : groupBy === 'customer'
-          ? ['customer', 'emails', 'calls', 'succeeded', 'failed', 'costUsd', 'avgCostPerEmail', 'tokens']
-          : ['date', 'customer', 'emails', 'calls', 'succeeded', 'failed', 'costUsd', 'avgCostPerEmail', 'tokens'];
+          ? ['customer', ...metricCols]
+          : groupBy === 'model'
+            ? ['model', 'emails', 'calls', 'succeeded', 'failed', 'costUsd', 'avgCostPerEmail', 'tokens']
+            : ['date', 'customer', ...metricCols];
 
     const esc = (v: unknown) => {
       const s = String(v ?? '');

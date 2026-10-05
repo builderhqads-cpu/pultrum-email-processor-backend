@@ -6,7 +6,11 @@ import { RenovoAdminGuard } from './renovo-admin.guard';
 import { AuditReportsService, type GroupBy } from './audit-reports.service';
 
 function normalizeGroupBy(value?: string): GroupBy {
-  return value === 'customer' || value === 'day_customer' ? value : 'day';
+  return value === 'customer' ||
+    value === 'model' ||
+    value === 'day_customer'
+    ? value
+    : 'day';
 }
 
 @Controller('audit')
