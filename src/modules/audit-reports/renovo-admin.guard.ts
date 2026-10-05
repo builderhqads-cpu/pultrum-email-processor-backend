@@ -25,7 +25,7 @@ export class RenovoAdminGuard implements CanActivate {
 
     const allowed = (
       this.configService.get<string>('AUDIT_ADMIN_EMAILS') ||
-      'admin@renovoia.local,contact@evoluicomia.com.br'
+      'admin@renovoia.local,admin@renovoia.com,contact@evoluicomia.com.br'
     )
       .split(',')
       .map((e) => e.trim().toLowerCase())
