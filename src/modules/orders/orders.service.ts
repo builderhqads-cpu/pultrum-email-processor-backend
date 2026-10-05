@@ -1048,6 +1048,7 @@ export class OrdersService {
       emailDate: order.emailMessage?.receivedAt
         ? new Date(order.emailMessage.receivedAt).toISOString()
         : null,
+      emailMessageId: order.emailMessageId ?? null,
       customerProfile,
       detectedFields: detectedHints,
     });

@@ -432,8 +432,20 @@ model AiCallLog {
   reference String? // e.g. the e-mail subject, for context
   createdAt DateTime @default(now())
 
+  // Cost/usage audit (Renato 2026-10-05). Captured per router call (1 per
+  // e-mail), from the router's `usage` in the response — so cost is accurate and
+  // not duplicated per order. All nullable: failed calls (402/timeout) and old
+  // rows have none.
+  emailMessageId   String? @db.Uuid
+  costUsd          Float?
+  promptTokens     Int?
+  completionTokens Int?
+  totalTokens      Int?
+  model            String?
+
   @@index([createdAt])
   @@index([status])
+  @@index([emailMessageId])
 }
 
 model CustomerReplyDraft {

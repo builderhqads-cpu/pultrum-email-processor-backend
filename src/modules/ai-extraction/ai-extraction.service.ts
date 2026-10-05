@@ -112,6 +112,69 @@ export type AiEmailAnalysis = {
   requestPreview?: any;
 };
 
+// Cost/usage captured from one router call, for the processing/cost audit.
+export type AiCallUsage = {
+  costUsd: number | null;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+  model: string | null;
+};
+
+const AI_USAGE_STAGES = ['contextUsage', 'extractUsage', 'refineUsage'] as const;
+
+/**
+ * TOTAL cost/usage of one /eml-process call. The router bills several stages
+ * (context/extract/refine) and the top-level `usage` only mirrors the last one,
+ * so we SUM the stages when present, else fall back to the top-level `usage`.
+ * Shared so the cost-backfill script uses the exact same accounting.
+ */
+export function extractAiCallUsage(raw: any): AiCallUsage {
+  const asObj = (v: unknown): any =>
+    v && typeof v === 'object' ? (v as any) : null;
+  const num = (v: unknown): number | null =>
+    typeof v === 'number' && Number.isFinite(v) ? v : null;
+  const costOf = (u: any): number | null =>
+    num(u?.cost) ?? num(u?.total_cost) ?? num(u?.cost_details?.upstream_inference_cost);
+
+  const stages = AI_USAGE_STAGES.map((k) => asObj(raw?.[k])).filter(Boolean);
+  const model =
+    typeof raw?.model === 'string'
+      ? raw.model
+      : typeof raw?.usage?.model === 'string'
+        ? raw.usage.model
+        : null;
+
+  if (stages.length) {
+    let cost = 0;
+    let prompt = 0;
+    let completion = 0;
+    let total = 0;
+    for (const s of stages) {
+      cost += costOf(s) ?? 0;
+      prompt += num(s.prompt_tokens) ?? 0;
+      completion += num(s.completion_tokens) ?? 0;
+      total += num(s.total_tokens) ?? 0;
+    }
+    return {
+      costUsd: cost,
+      promptTokens: prompt || null,
+      completionTokens: completion || null,
+      totalTokens: total || null,
+      model,
+    };
+  }
+
+  const u = asObj(raw?.usage);
+  return {
+    costUsd: costOf(u),
+    promptTokens: num(u?.prompt_tokens),
+    completionTokens: num(u?.completion_tokens),
+    totalTokens: num(u?.total_tokens),
+    model,
+  };
+}
+
 export type AiExtractionResult = {
   fields: Record<string, string>;
   detectedFields?: Array<{
@@ -861,6 +924,9 @@ export class AiExtractionService {
       // "KW36") that the router would otherwise read from the .eml Date header.
       // Router (Matheus, 2026-09-03) accepts and recommends it; sent always.
       emailDate?: string | null;
+      // Source e-mail id — ties the call's cost/usage to the e-mail (and its
+      // customer) in the processing/cost audit. Not sent to the router.
+      emailMessageId?: string | null;
     },
   ): Promise<AiEmailAnalysis | null> {
     const url = this.resolveEmlProcessUrl();
@@ -961,6 +1027,7 @@ export class AiExtractionService {
           'FAILED',
           `HTTP ${res.status} ${res.statusText} — ${(text || '').slice(0, 500)}`,
           options?.emailSubject,
+          options?.emailMessageId,
         );
         return null;
       }
@@ -975,6 +1042,7 @@ export class AiExtractionService {
           'FAILED',
           'Resposta não-JSON do router',
           options?.emailSubject,
+          options?.emailMessageId,
         );
         return null;
       }
@@ -997,12 +1065,20 @@ export class AiExtractionService {
                 emlBase64: `${String(eml).slice(0, 120)}…(${String(eml).length} bytes)`,
               }),
         };
-        void this.recordAiCall('SUCCEEDED', null, options?.emailSubject);
+        void this.recordAiCall(
+          'SUCCEEDED',
+          null,
+          options?.emailSubject,
+          options?.emailMessageId,
+          this.extractUsage(raw),
+        );
       } else {
         void this.recordAiCall(
           'FAILED',
           'Router respondeu sem uma análise válida',
           options?.emailSubject,
+          options?.emailMessageId,
+          this.extractUsage(raw),
         );
       }
       return analysis;
@@ -1024,6 +1100,7 @@ export class AiExtractionService {
           ? `Timeout após ${timeoutMs}ms (router lento/indisponível)`
           : (err?.message ?? String(err)),
         options?.emailSubject,
+        options?.emailMessageId,
       );
       return null;
     }
@@ -1038,6 +1115,8 @@ export class AiExtractionService {
     status: 'SUCCEEDED' | 'FAILED',
     error?: string | null,
     reference?: string | null,
+    emailMessageId?: string | null,
+    usage?: AiCallUsage | null,
   ): Promise<void> {
     try {
       await this.prismaService.aiCallLog.create({
@@ -1046,11 +1125,30 @@ export class AiExtractionService {
           status,
           error: error ? error.toString().slice(0, 2000) : null,
           reference: reference ? reference.toString().slice(0, 300) : null,
+          emailMessageId: emailMessageId ?? null,
+          costUsd: usage?.costUsd ?? null,
+          promptTokens: usage?.promptTokens ?? null,
+          completionTokens: usage?.completionTokens ?? null,
+          totalTokens: usage?.totalTokens ?? null,
+          model: usage?.model ?? null,
         },
       });
     } catch (err: any) {
       this.logger.warn(`Failed to record AiCallLog: ${err?.message ?? err}`);
     }
+  }
+
+  /**
+   * Pull the TOTAL cost/usage out of the router response.
+   *
+   * The router runs several LLM stages per e-mail (contextUsage / extractUsage /
+   * refineUsage), and the top-level `usage` is only a copy of the LAST stage
+   * (refine) — using it alone undercounts the real cost. So when per-stage usage
+   * is present we SUM the stages; otherwise (single-call responses) we fall back
+   * to the top-level `usage`. Defensive: missing/non-numeric fields become null.
+   */
+  private extractUsage(raw: any): AiCallUsage {
+    return extractAiCallUsage(raw);
   }
 
   private parseEmailAnalysis(raw: any): AiEmailAnalysis | null {

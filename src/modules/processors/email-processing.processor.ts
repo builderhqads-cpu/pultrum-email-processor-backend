@@ -556,6 +556,7 @@ export class EmailProcessingProcessor extends WorkerHost {
       emailDate: email.receivedAt
         ? new Date(email.receivedAt).toISOString()
         : null,
+      emailMessageId: email.id,
     });
     if (!analysis) {
       throw new Error(`AI analysis returned null for emailMessageId=${email.id}`);
@@ -989,6 +990,7 @@ export class EmailProcessingProcessor extends WorkerHost {
       replyEmailMessage.rawMimeBase64 ?? null,
       {
         detectedFields: preDetectedZipcodes,
+        emailMessageId: replyEmailMessage.id,
       },
     );
     if (!analysis) {
