@@ -286,6 +286,29 @@ export class EmailsService {
   }
 
   /** Rebuild the email as received (HTML + embedded signature images). */
+  /**
+   * The raw .eml for download (Renato 2026-10-07). The original MIME is already
+   * stored as base64; here we just decode it and build a safe filename.
+   */
+  async getEmlFile(id: string): Promise<{ buffer: Buffer; filename: string }> {
+    const email = await this.prismaService.emailMessage.findUnique({
+      where: { id },
+      select: { rawMimeBase64: true, rawMimeFileName: true, subject: true },
+    });
+    if (!email) throw new NotFoundException(`Email not found: id=${id}`);
+    if (!email.rawMimeBase64) {
+      throw new NotFoundException(`No raw .eml stored for email id=${id}`);
+    }
+    const buffer = Buffer.from(email.rawMimeBase64, 'base64');
+    const base =
+      (email.rawMimeFileName || email.subject || `email-${id}`)
+        .replace(/[^\w.\- ]+/g, '_')
+        .trim()
+        .slice(0, 120) || `email-${id}`;
+    const filename = base.toLowerCase().endsWith('.eml') ? base : `${base}.eml`;
+    return { buffer, filename };
+  }
+
   async findOriginal(id: string) {
     const email = await this.prismaService.emailMessage.findUnique({
       where: { id },
