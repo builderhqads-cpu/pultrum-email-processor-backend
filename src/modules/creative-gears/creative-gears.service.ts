@@ -5,6 +5,11 @@ import 'isomorphic-fetch';
 import { PrismaService } from '../../prisma/prisma.service';
 import { XmlService } from '../xml/xml.service';
 import { AlertsService } from '../alerts/alerts.service';
+import { EmailSenderService } from '../email-sender/email-sender.service';
+import {
+  SystemSettingsService,
+  type ConfirmationLang,
+} from '../system-settings/system-settings.service';
 
 @Injectable()
 export class CreativeGearsService {
@@ -15,7 +20,149 @@ export class CreativeGearsService {
     private readonly xmlService: XmlService,
     private readonly configService: ConfigService,
     private readonly alertsService: AlertsService,
+    private readonly emailSenderService: EmailSenderService,
+    private readonly systemSettingsService: SystemSettingsService,
   ) {}
+
+  // --- XML-sent confirmation reply (Niek 2026-10-07) ----------------------
+  // When an order is accepted by Transpas, send the customer a short NL
+  // confirmation. One per e-mail/batch (idempotent via the audit log). The
+  // on/off switch and the template are edited by Niek in Settings (SystemSettings).
+
+  private timeGreeting(lang: ConfirmationLang): string {
+    const hour = Number(
+      new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Europe/Amsterdam',
+        hour: '2-digit',
+        hour12: false,
+      }).format(new Date()),
+    );
+    const slot = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
+    const greetings: Record<ConfirmationLang, Record<string, string>> = {
+      nl: { morning: 'Goedemorgen', afternoon: 'Goedemiddag', evening: 'Goedenavond' },
+      en: { morning: 'Good morning', afternoon: 'Good afternoon', evening: 'Good evening' },
+      de: { morning: 'Guten Morgen', afternoon: 'Guten Tag', evening: 'Guten Abend' },
+    };
+    return greetings[lang][slot];
+  }
+
+  /** Best-effort: never breaks the delivery flow. */
+  private async sendAcceptedConfirmation(orderId: string): Promise<void> {
+    try {
+      const order = await this.prismaService.transportOrder.findUnique({
+        where: { id: orderId },
+        include: { emailMessage: { include: { mailbox: true } } },
+      });
+      if (!order) return;
+
+      // Resolve the template for the customer e-mail's language (NL/EN/DE),
+      // falling back to Dutch when that language has no template or is unknown.
+      const config = await this.systemSettingsService.getXmlConfirmationConfig(
+        order.emailMessage?.classificationLanguage ?? null,
+      );
+      if (!config.enabled) return;
+
+      const emailId = order.emailMessageId;
+      const toEmail =
+        order.customerEmail || order.emailMessage?.fromEmail || null;
+      if (!toEmail) return;
+
+      // All orders from this e-mail (also used for the {orders} list).
+      const siblings = await this.prismaService.transportOrder.findMany({
+        where: { emailMessageId: emailId },
+        select: {
+          id: true,
+          status: true,
+          externalReference: true,
+          originalOrderReference: true,
+          batchSequence: true,
+        },
+        orderBy: { batchSequence: 'asc' },
+      });
+
+      // Only confirm once the WHOLE e-mail is accepted (Niek 2026-10-07): a
+      // single-order e-mail fires immediately; a batch fires on the last accept.
+      const allAccepted =
+        siblings.length > 0 &&
+        siblings.every(
+          (s) => s.status === OrderStatus.CREATIVE_GEARS_ACCEPTED,
+        );
+      if (!allAccepted) return;
+
+      // Idempotency: one confirmation per e-mail/batch.
+      const already = await this.prismaService.auditLog.findFirst({
+        where: {
+          entityType: 'EmailMessage',
+          entityId: emailId,
+          action: 'XML_CONFIRMATION_SENT',
+        },
+        select: { id: true },
+      });
+      if (already) return;
+
+      // Subject: Niek's custom subject if set, else reply to the original.
+      const original = (order.emailMessage?.subject || '').trim();
+      const subject = config.subject
+        ? config.subject
+        : !original
+          ? 'Bevestiging'
+          : /^re:/i.test(original)
+            ? original
+            : `Re: ${original}`;
+      // Reference list of all orders from this e-mail (for the {orders} token).
+      const refs = siblings
+        .map(
+          (s) =>
+            (s.externalReference || s.originalOrderReference || '').trim() ||
+            s.id.split('-')[0],
+        )
+        .filter(Boolean);
+      // De-dup while keeping order (batch legs can share a reference).
+      const ordersList = [...new Set(refs)].map((r) => `- ${r}`).join('\n');
+
+      // Body from the editable template; {greeting} -> time-based greeting in the
+      // resolved language, {orders} -> the reference list of the processed order(s).
+      const body = config.body
+        .replace(/\{greeting\}/g, this.timeGreeting(config.lang))
+        .replace(/\{orders\}/g, ordersList);
+
+      const sendResult = await this.emailSenderService.sendEmail({
+        mailboxEmail: order.emailMessage?.mailbox?.email ?? null,
+        toEmail,
+        subject,
+        body,
+        replyTo: null,
+        inReplyTo: order.emailMessage?.messageIdHeader ?? null,
+        references: order.emailMessage?.messageIdHeader ?? null,
+        replyToGraphMessageId: order.emailMessage?.graphMessageId ?? null,
+        signature: null,
+      });
+
+      await this.prismaService.auditLog.create({
+        data: {
+          entityType: 'EmailMessage',
+          entityId: emailId,
+          action: 'XML_CONFIRMATION_SENT',
+          detailsJson: {
+            orderId,
+            toEmail,
+            subject,
+            lang: config.lang,
+            provider: sendResult.provider,
+            mocked: sendResult.mocked,
+            messageId: sendResult.messageId ?? null,
+          } as any,
+        },
+      });
+      this.logger.log(
+        `XML-sent confirmation e-mailed to ${toEmail} (orderId=${orderId})`,
+      );
+    } catch (err: any) {
+      this.logger.warn(
+        `XML-sent confirmation failed orderId=${orderId}: ${err?.message ?? err}`,
+      );
+    }
+  }
 
   private get apiUrl() {
     return (
@@ -106,6 +253,7 @@ export class CreativeGearsService {
       this.logger.warn(
         `CREATIVE_GEARS_API_URL not configured; mocking ACCEPTED for orderId=${orderId}`,
       );
+      await this.sendAcceptedConfirmation(orderId);
       return { mocked: true, status: 'ACCEPTED' as const };
     }
 
@@ -174,6 +322,7 @@ export class CreativeGearsService {
         this.logger.log(
           `Creative Gears accepted XML: orderId=${orderId} deliveryId=${delivery.id} status=${res.status}`,
         );
+        await this.sendAcceptedConfirmation(orderId);
       } else {
         this.logger.warn(
           `Creative Gears rejected XML: orderId=${orderId} deliveryId=${delivery.id} status=${res.status} ${res.statusText} response=${this.responsePreview(responseText)}`,

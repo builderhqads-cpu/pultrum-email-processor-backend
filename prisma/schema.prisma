@@ -220,6 +220,7 @@ model TransportOrder {
   validationWarnings ValidationWarning[]
   aiRequests    AiRequest[]
   xmlDeliveries XmlDelivery[]
+  goodsLines    OrderGoodsLine[]
   replyDraft    CustomerReplyDraft? @relation("OrderReplyDraft")
 
   @@index([emailMessageId])
@@ -231,6 +232,31 @@ model TransportOrder {
   @@index([renovoToken])
   @@index([replyToken])
   @@index([conversationKey])
+}
+
+// Goods lines per shipment (Renato 2026-10-07). An order (OPEN_TRANSPORT) can
+// carry several goods lines instead of a single cargo — each with its own
+// packaging, dimensions, weight-per-unit and barcode. Additive: when an order
+// has NO goods lines, the legacy single-cargo fields (cargo_*) drive the Goods
+// block unchanged. Phase 1 = manual entry; AI auto-fill + XML come later.
+model OrderGoodsLine {
+  id                 String   @id @default(uuid()) @db.Uuid
+  orderId            String   @db.Uuid
+  sequence           Int      @default(0)
+  quantity           Int?
+  packagingType      String? // Europallet / Block pallet / Box ...
+  length             Float? // cm
+  width              Float? // cm
+  height             Float? // cm
+  weightPerUnit      Float? // kg
+  barcode            String?
+  productDescription String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  order TransportOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
 }
 
 model BatchImport {
@@ -505,6 +531,19 @@ model SystemSettings {
   // MANUAL | SELECTIVE | AUTONOMOUS
   deliveryMode               String   @default("MANUAL")
   autoXmlConfidenceThreshold Float    @default(0.9)
+  // XML-sent confirmation reply (Niek 2026-10-07): a short reply to the customer
+  // once their order(s) are accepted by Transpas. Niek edits the template here.
+  // Body may use the {greeting} placeholder (time-based, localized) and {orders}.
+  // The base Subject/Body are the DUTCH (default) template; En/De are optional
+  // per-language overrides (Renato 2026-10-08) chosen by the customer e-mail
+  // language, falling back to Dutch when empty or language unknown.
+  xmlConfirmationEnabled     Boolean  @default(false)
+  xmlConfirmationSubject     String?
+  xmlConfirmationBody        String?
+  xmlConfirmationSubjectEn   String?
+  xmlConfirmationBodyEn      String?
+  xmlConfirmationSubjectDe   String?
+  xmlConfirmationBodyDe      String?
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
 }

@@ -41,6 +41,19 @@ import { TransportBookingValidationService } from '../transport-booking-validati
 import { AiReplyService } from '../ai-reply/ai-reply.service';
 import { XmlService } from '../xml/xml.service';
 
+// Goods-line payload from the portal (manual entry). Numeric fields may arrive
+// as strings; only the keys present are applied (partial update supported).
+export type GoodsLineInput = {
+  quantity?: number | string | null;
+  packagingType?: string | null;
+  length?: number | string | null;
+  width?: number | string | null;
+  height?: number | string | null;
+  weightPerUnit?: number | string | null;
+  barcode?: string | null;
+  productDescription?: string | null;
+};
+
 // Statuses from which a normal "Send XML" is allowed: ready, or retryable after
 // a delivery failure/rejection.
 const XML_SEND_STATUSES = new Set<OrderStatus>([
@@ -361,6 +374,7 @@ export class OrdersService {
           include: { replyDraft: { select: { id: true } } },
         },
         xmlDeliveries: true,
+        goodsLines: { orderBy: { sequence: 'asc' } },
         replyDraft: true,
         emailMessage: { select: { subject: true, fromEmail: true } },
       },
@@ -948,6 +962,103 @@ export class OrdersService {
     });
 
     return { orderId, key: cleanKey, value };
+  }
+
+  // --- Goods lines (Renato 2026-10-07) ------------------------------------
+  // Multiple goods lines per shipment. Phase 1 = manual CRUD from the portal;
+  // AI auto-fill and XML output land in later phases. Additive: an order with
+  // no lines keeps using the single-cargo fields unchanged.
+
+  /** Coerce an incoming goods-line payload; only the provided keys are set. */
+  private normalizeGoodsLineInput(input: GoodsLineInput): Record<string, unknown> {
+    const data: Record<string, unknown> = {};
+    const num = (v: unknown): number | null => {
+      if (v == null || v === '') return null;
+      const n = Number(String(v).replace(',', '.'));
+      return Number.isFinite(n) ? n : null;
+    };
+    const str = (v: unknown): string | null => {
+      const s = (v ?? '').toString().trim();
+      return s ? s : null;
+    };
+    if ('quantity' in input) {
+      const n = num(input.quantity);
+      data.quantity = n == null ? null : Math.trunc(n);
+    }
+    if ('length' in input) data.length = num(input.length);
+    if ('width' in input) data.width = num(input.width);
+    if ('height' in input) data.height = num(input.height);
+    if ('weightPerUnit' in input) data.weightPerUnit = num(input.weightPerUnit);
+    if ('packagingType' in input) data.packagingType = str(input.packagingType);
+    if ('barcode' in input) data.barcode = str(input.barcode);
+    if ('productDescription' in input)
+      data.productDescription = str(input.productDescription);
+    return data;
+  }
+
+  async createGoodsLine(orderId: string, input: GoodsLineInput) {
+    const order = await this.prismaService.transportOrder.findUnique({
+      where: { id: orderId },
+      select: { id: true },
+    });
+    if (!order) throw new NotFoundException(`Order not found: id=${orderId}`);
+
+    const last = await this.prismaService.orderGoodsLine.findFirst({
+      where: { orderId },
+      orderBy: { sequence: 'desc' },
+      select: { sequence: true },
+    });
+    const line = await this.prismaService.orderGoodsLine.create({
+      data: {
+        orderId,
+        sequence: (last?.sequence ?? -1) + 1,
+        ...this.normalizeGoodsLineInput(input),
+      },
+    });
+    await this.auditLogService.log({
+      entityType: 'TransportOrder',
+      entityId: orderId,
+      action: 'GOODS_LINE_ADDED',
+      detailsJson: { lineId: line.id } as any,
+    });
+    return line;
+  }
+
+  async updateGoodsLine(orderId: string, lineId: string, input: GoodsLineInput) {
+    const existing = await this.prismaService.orderGoodsLine.findFirst({
+      where: { id: lineId, orderId },
+      select: { id: true },
+    });
+    if (!existing) throw new NotFoundException(`Goods line not found: id=${lineId}`);
+
+    const updated = await this.prismaService.orderGoodsLine.update({
+      where: { id: lineId },
+      data: this.normalizeGoodsLineInput(input),
+    });
+    await this.auditLogService.log({
+      entityType: 'TransportOrder',
+      entityId: orderId,
+      action: 'GOODS_LINE_EDITED',
+      detailsJson: { lineId } as any,
+    });
+    return updated;
+  }
+
+  async deleteGoodsLine(orderId: string, lineId: string) {
+    const existing = await this.prismaService.orderGoodsLine.findFirst({
+      where: { id: lineId, orderId },
+      select: { id: true },
+    });
+    if (!existing) throw new NotFoundException(`Goods line not found: id=${lineId}`);
+
+    await this.prismaService.orderGoodsLine.delete({ where: { id: lineId } });
+    await this.auditLogService.log({
+      entityType: 'TransportOrder',
+      entityId: orderId,
+      action: 'GOODS_LINE_DELETED',
+      detailsJson: { lineId } as any,
+    });
+    return { deleted: true, id: lineId };
   }
 
   /** Re-fill a single batch order from its stored rawOrderText (no siblings). */

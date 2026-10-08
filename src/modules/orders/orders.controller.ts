@@ -9,7 +9,7 @@ import {
   Put,
   UseGuards,
 } from '@nestjs/common';
-import { OrdersService } from './orders.service';
+import { OrdersService, type GoodsLineInput } from './orders.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @Controller('orders')
@@ -132,6 +132,32 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard)
   forceSendBatchXml(@Param('batchImportId') batchImportId: string) {
     return this.ordersService.sendBatchXml(batchImportId, true);
+  }
+
+  // Renato 2026-10-07: goods lines per shipment (manual CRUD, Phase 1).
+  @Post(':id/goods-lines')
+  @UseGuards(JwtAuthGuard)
+  createGoodsLine(@Param('id') id: string, @Body() body: GoodsLineInput) {
+    return this.ordersService.createGoodsLine(id, body ?? {});
+  }
+
+  @Patch(':id/goods-lines/:lineId')
+  @UseGuards(JwtAuthGuard)
+  updateGoodsLine(
+    @Param('id') id: string,
+    @Param('lineId') lineId: string,
+    @Body() body: GoodsLineInput,
+  ) {
+    return this.ordersService.updateGoodsLine(id, lineId, body ?? {});
+  }
+
+  @Delete(':id/goods-lines/:lineId')
+  @UseGuards(JwtAuthGuard)
+  deleteGoodsLine(
+    @Param('id') id: string,
+    @Param('lineId') lineId: string,
+  ) {
+    return this.ordersService.deleteGoodsLine(id, lineId);
   }
 
   @Post(':id/send-ai-request')
