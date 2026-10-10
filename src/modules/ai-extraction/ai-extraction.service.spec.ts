@@ -675,4 +675,59 @@ describe('AiExtractionService', () => {
     const res = await service.analyzeEmail(null, { emailSubject: 'x' });
     expect(res).toBeNull();
   });
+
+  // Niek (Nijhuis 2026-10-02): the router returned a known field ("Laadmeter")
+  // inside unmappedFields; it must be promoted into cargo_loading_meter so it
+  // reaches the XML even when the customer sends no length/width to compute it.
+  it('promotes an aliased unmapped field (Laadmeter) into its canonical field', () => {
+    const service = new AiExtractionService(
+      { get: jest.fn() } as any,
+      { aiCallLog: { create: jest.fn() } } as any,
+      { log: jest.fn() } as any,
+      { resolveZipcodeHints: jest.fn(async () => []) } as any,
+    );
+
+    const parsed = (service as any).parseEmailAnalysis({
+      isTransportOrder: true,
+      confidence: 0.9,
+      orders: [
+        {
+          externalReference: '360910',
+          fields: { pickup_city: 'Rijssen', delivery_city: 'Leidschendam' },
+          unmappedFields: { Laadmeter: '5', 'Aantal bok': '2.9' },
+        },
+      ],
+    });
+
+    const order = parsed.orders[0];
+    // Promoted into the real loading-meter field...
+    expect(order.fields.cargo_loading_meter).toBe('5');
+    // ...and removed from the extras (no duplicate), while a genuine extra stays.
+    expect(order.unmappedFields.Laadmeter).toBeUndefined();
+    expect(order.unmappedFields['Aantal bok']).toBe('2.9');
+  });
+
+  it('does not override a loading meter the router already mapped', () => {
+    const service = new AiExtractionService(
+      { get: jest.fn() } as any,
+      { aiCallLog: { create: jest.fn() } } as any,
+      { log: jest.fn() } as any,
+      { resolveZipcodeHints: jest.fn(async () => []) } as any,
+    );
+
+    const parsed = (service as any).parseEmailAnalysis({
+      isTransportOrder: true,
+      confidence: 0.9,
+      orders: [
+        {
+          externalReference: 'X',
+          fields: { cargo_loading_meter: '12' },
+          unmappedFields: { Laadmeter: '5' },
+        },
+      ],
+    });
+
+    // The mapped value wins; the unmapped duplicate is left as an extra.
+    expect(parsed.orders[0].fields.cargo_loading_meter).toBe('12');
+  });
 });

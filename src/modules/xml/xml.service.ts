@@ -79,9 +79,10 @@ export class XmlService {
     return value == null || !Number.isFinite(value) ? '' : value.toFixed(3);
   }
 
-  /** Loading meter is rounded to a single decimal (Niek). */
+  /** Loading meter: 2 decimals allowed (Niek 2026-10-08). Applies to the
+   * COMPUTED value; a customer-provided laadmeter is used verbatim elsewhere. */
   private formatLoadingMeter(value: number | null) {
-    return value == null || !Number.isFinite(value) ? '' : value.toFixed(1);
+    return value == null || !Number.isFinite(value) ? '' : value.toFixed(2);
   }
 
   private calcVolume(params: {

@@ -224,7 +224,7 @@ describe('XmlService generateOrderXml normalization', () => {
     // Niek 2026-09-03: deliveryaddress emits a present-but-empty <datetill/> so
     // Transpas does not default "Losdatum tot" to the delivery date.
     expect(xml).toMatch(/<deliveryaddress>[\s\S]*?<datetill\/>[\s\S]*?<time>/);
-    expect(xml).toContain('<loadingmeter>96.0</loadingmeter>');
+    expect(xml).toContain('<loadingmeter>96.00</loadingmeter>');
     expect(xml).toContain('<volume>737.280</volume>');
     // Both cargo AND goodsline unit_id carry matchmode="1" (Creative Gears):
     // no bare <unit_id> without the attribute.
@@ -267,8 +267,8 @@ describe('XmlService generateOrderXml normalization', () => {
     expect(xml).toContain('<planningnote>Absatteln</planningnote>');
     expect(xml).toContain('<address2>Poort 3</address2>');
     expect(xml).toContain('<address2>Ingang achter</address2>');
-    // Loading meter now to a single decimal.
-    expect(xml).toContain('<loadingmeter>96.0</loadingmeter>');
+    // Loading meter to two decimals (Niek 2026-10-08).
+    expect(xml).toContain('<loadingmeter>96.00</loadingmeter>');
     // ediprovider_id defaults to 98 (Pultrum), matchmode 0, under <import>.
     expect(xml).toContain('<ediprovider_id matchmode="0">98</ediprovider_id>');
     // The provider sits between <import> and <transportbookings>, not inside a
@@ -282,7 +282,7 @@ describe('XmlService generateOrderXml normalization', () => {
         where: {
           orderId_key: { orderId: 'order-1', key: 'cargo_loading_meter' },
         },
-        update: expect.objectContaining({ value: '96.0' }),
+        update: expect.objectContaining({ value: '96.00' }),
       }),
     );
     expect(prisma.orderField.upsert).toHaveBeenCalledWith(

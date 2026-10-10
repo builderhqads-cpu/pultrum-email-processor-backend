@@ -1158,12 +1158,20 @@ export class AiExtractionService {
       .filter(
         (o: any) => o && typeof o === 'object' && o.fields && typeof o.fields === 'object',
       )
-      .map((o: any) => ({
-        externalReference:
-          o.externalReference != null ? String(o.externalReference).trim() : null,
-        fields: this.normalizeAiFields(o.fields),
-        unmappedFields: this.normalizeUnmappedFields(o.unmappedFields),
-      }));
+      .map((o: any) => {
+        const promoted = this.promoteAliasedUnmappedFields(
+          this.normalizeAiFields(o.fields),
+          this.normalizeUnmappedFields(o.unmappedFields),
+        );
+        return {
+          externalReference:
+            o.externalReference != null
+              ? String(o.externalReference).trim()
+              : null,
+          fields: promoted.fields,
+          unmappedFields: promoted.unmappedFields,
+        };
+      });
     return {
       isTransportOrder: Boolean(raw.isTransportOrder),
       confidence: Number(raw.confidence) || 0,
@@ -1237,6 +1245,40 @@ export class AiExtractionService {
       out[key] = s;
     }
     return out;
+  }
+
+  /**
+   * Niek (Nijhuis 2026-10-02): the router sometimes returns a KNOWN field inside
+   * `unmappedFields` instead of the mapped `fields` — e.g. Nijhuis supplies the
+   * loading meter ready-made ("Laadmeter": "5") and the router files it as an
+   * extra. Because unmappedFields are kept verbatim (no alias fold, by design),
+   * the value only shows as "additional information" and never reaches its real
+   * field (cargo_loading_meter), which then stays empty because the customer
+   * gives no length/width to compute it from.
+   *
+   * Here we PROMOTE any unmapped entry whose label maps to a canonical field
+   * into the mapped fields — but ONLY when that field is still empty, so we never
+   * override what the router already mapped. Genuine extras (no alias match) stay
+   * in unmappedFields and keep showing as additional information. General fix:
+   * works for any customer/field the router happens to leave unmapped.
+   */
+  private promoteAliasedUnmappedFields(
+    fields: Record<string, string>,
+    unmappedFields: Record<string, string>,
+  ): { fields: Record<string, string>; unmappedFields: Record<string, string> } {
+    const outFields = { ...fields };
+    const outUnmapped: Record<string, string> = {};
+    for (const [k, v] of Object.entries(unmappedFields)) {
+      const canonical = CANONICAL_FIELD_KEYS.has(k)
+        ? k
+        : AI_FIELD_KEY_ALIASES.get(normalizeFieldKey(k));
+      if (canonical && !outFields[canonical]) {
+        outFields[canonical] = v;
+        continue;
+      }
+      outUnmapped[k] = v;
+    }
+    return { fields: outFields, unmappedFields: outUnmapped };
   }
 
   async extractTransportOrder(orderId: string) {
