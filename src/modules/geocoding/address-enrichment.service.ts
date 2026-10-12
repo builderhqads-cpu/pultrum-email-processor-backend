@@ -5,6 +5,7 @@ import { TransportBookingValidationService } from '../transport-booking-validati
 import { splitStreetAddress } from '../../utils/field-normalize';
 import { sanitizeExtractedValue } from '../../utils/sanitize';
 import { GoogleGeocodingService } from './google-geocoding.service';
+import { PdokGeocodingService } from './pdok-geocoding.service';
 
 type DetectedFieldLike = {
   key: string;
@@ -171,6 +172,7 @@ export class AddressEnrichmentService {
 
   constructor(
     private readonly googleGeocodingService: GoogleGeocodingService,
+    private readonly pdokGeocodingService: PdokGeocodingService,
     private readonly regexExtractionService: RegexExtractionService,
     private readonly transportBookingValidationService: TransportBookingValidationService,
     // Last on purpose: any positional construction keeps working, and the
@@ -337,11 +339,32 @@ export class AddressEnrichmentService {
 
       if (!address || !country) continue;
 
-      const geocoded = await this.googleGeocodingService.lookupZipcode({
-        address,
-        city,
-        country,
-      });
+      // NL: try PDOK first (authoritative BAG, free, better without a number);
+      // use it only on a confident hit, otherwise fall back to Google. Non-NL
+      // addresses go straight to Google (PDOK is the Dutch registry only).
+      let geocoded:
+        | Awaited<ReturnType<GoogleGeocodingService['lookupZipcode']>>
+        | null = null;
+      if (country === 'NL') {
+        const pdok = await this.pdokGeocodingService.lookupZipcode({
+          address,
+          city,
+          country,
+        });
+        if (pdok?.zipcode && !pdok.partialMatch) {
+          geocoded = pdok;
+          this.logger.log(
+            `PDOK zipcode for ${side}: ${pdok.zipcode} (${[address, city].filter(Boolean).join(', ')})`,
+          );
+        }
+      }
+      if (!geocoded) {
+        geocoded = await this.googleGeocodingService.lookupZipcode({
+          address,
+          city,
+          country,
+        });
+      }
 
       // Never take a zipcode from an inexact match — better to leave it missing
       // and ask the customer than to ship to the wrong postal code.
