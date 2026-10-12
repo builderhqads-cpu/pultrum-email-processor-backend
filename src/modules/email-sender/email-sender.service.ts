@@ -80,6 +80,37 @@ export class EmailSenderService {
     return signature ? `${body}\n\n${signature}` : body;
   }
 
+  private escapeHtml(s: string) {
+    return s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  // HTML body (Niek 2026-10-12): we sent plain text, so the reply showed up in a
+  // different font than the mailbox's (Exchange-appended) signature and with no
+  // clear gap before it. We now send HTML in Arial (to match the signature) and
+  // end with a blank line so there is a visible line before the signature.
+  private composeBodyHtml(input: SendEmailInput): string {
+    const body = (input.body || '').toString();
+    const signature = (input.signature || '').toString().trim();
+    const bodyHtml = this.escapeHtml(body).replace(/\r?\n/g, '<br>');
+    let sigHtml = '';
+    if (signature) {
+      // A stored signature may already be HTML; keep it as-is, else escape it.
+      const looksHtml = /<[a-z][\s\S]*>/i.test(signature);
+      sigHtml =
+        '<br><br>' +
+        (looksHtml
+          ? signature
+          : this.escapeHtml(signature).replace(/\r?\n/g, '<br>'));
+    }
+    return (
+      '<div style="font-family: Arial, Helvetica, sans-serif; font-size: 11pt; color: #000000;">' +
+      `${bodyHtml}${sigHtml}<br></div>`
+    );
+  }
+
   // Stored as "graph:<id>" / "imap:<id>". Only graph messages can be replied to
   // natively via Graph; returns the raw id or null.
   private toGraphMessageId(stored?: string | null): string | null {
@@ -131,7 +162,7 @@ export class EmailSenderService {
         if (draft?.id) {
           await client.api(`${base}/messages/${encodeURIComponent(draft.id)}`).patch({
             subject: input.subject,
-            body: { contentType: 'Text', content: this.composeBody(input) },
+            body: { contentType: 'HTML', content: this.composeBodyHtml(input) },
             toRecipients: [{ emailAddress: { address: input.toEmail } }],
             ...(replyTo ? { replyTo } : {}),
           });
@@ -156,7 +187,7 @@ export class EmailSenderService {
     await client.api(`${base}/sendMail`).post({
       message: {
         subject: input.subject,
-        body: { contentType: 'Text', content: this.composeBody(input) },
+        body: { contentType: 'HTML', content: this.composeBodyHtml(input) },
         toRecipients: [{ emailAddress: { address: input.toEmail } }],
         ...(replyTo ? { replyTo } : {}),
       },
@@ -191,6 +222,7 @@ export class EmailSenderService {
       to: input.toEmail,
       subject: input.subject,
       text: this.composeBody(input),
+      html: this.composeBodyHtml(input),
       ...(input.replyTo || cfg.replyTo
         ? { replyTo: input.replyTo || cfg.replyTo }
         : {}),
