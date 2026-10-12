@@ -397,16 +397,28 @@ export class OrdersService {
       subject: string | null;
       // All orders in the batch (sorted), so the detail view can offer prev/next
       // navigation and a picker to jump to any sibling order (Renato 2026-09-09).
+      // status + completeness let the picker flag which siblings still need
+      // attention vs are ready, without going back to the list (Renato 2026-10-12).
       orders: Array<{
         id: string;
         sequence: number | null;
         reference: string | null;
+        status: string;
+        completeness: number;
       }>;
     } | null = null;
     if (order.batchImportId) {
       const siblings = await this.prismaService.transportOrder.findMany({
         where: { batchImportId: order.batchImportId },
-        select: { id: true, batchSequence: true, externalReference: true },
+        select: {
+          id: true,
+          batchSequence: true,
+          externalReference: true,
+          status: true,
+          _count: {
+            select: { missingFields: true, validationWarnings: true },
+          },
+        },
         orderBy: { batchSequence: 'asc' },
       });
       batch = {
@@ -417,6 +429,11 @@ export class OrdersService {
           id: o.id,
           sequence: o.batchSequence,
           reference: o.externalReference,
+          status: o.status,
+          completeness: this.transportBookingValidationService.computeCompleteness(
+            o._count.missingFields,
+            o._count.validationWarnings,
+          ),
         })),
       };
     }
