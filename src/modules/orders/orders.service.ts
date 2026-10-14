@@ -730,6 +730,15 @@ export class OrdersService {
     });
 
     const runRefill = async () => {
+      // Always re-read the latest customer profiles first, so a reprocess uses
+      // the CURRENT aiInstructions — never a stale in-memory cached copy. The
+      // cache is otherwise only refreshed at startup / on a portal profile save,
+      // which could still be stale in the process handling this reprocess
+      // (Renato 2026-10-14: edited instruction wasn't applied on reprocess-fresh).
+      await this.clientProfileService
+        .refreshDatabaseProfiles()
+        .catch(() => undefined);
+
       if (order.batchImportId && order.rawOrderText) {
         // Batch order: reprocess ONLY this order from its stored rawOrderText,
         // NON-destructively (the single re-fill preserves everything present).
