@@ -105,9 +105,12 @@ export class EmailSenderService {
           ? signature
           : this.escapeHtml(signature).replace(/\r?\n/g, '<br>'));
     }
+    // Trailing blank line (two <br>) so there is a clear gap before the signature
+    // the mail server appends — one <br> only broke the line, Niek wanted a blank
+    // line between the reply and the signature (2026-10-14).
     return (
       '<div style="font-family: Arial, Helvetica, sans-serif; font-size: 11pt; color: #000000;">' +
-      `${bodyHtml}${sigHtml}<br></div>`
+      `${bodyHtml}${sigHtml}<br><br></div>`
     );
   }
 
